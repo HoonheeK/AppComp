@@ -4,7 +4,8 @@ import type { ChangeEvent } from 'react';
 // 이벤트 타입 정의
 type ScheduleEvent = {
   id: string;
-  date: string;
+  startDate: string;
+  endDate: string;
   title: string;
   description: string;
   time?: string;
@@ -32,7 +33,7 @@ const getTodayDate = () => {
 
 const LOCAL_STORAGE_KEY = 'schedule_app_events';
 
-function ScheduleManage() {
+function CalendarView() {
   const [currentDate, setCurrentDate] = useState<Date>(new Date());
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [events, setEvents] = useState<ScheduleEvent[]>([]);
@@ -41,6 +42,8 @@ function ScheduleManage() {
   const [eventDescription, setEventDescription] = useState<string>('');
   const [eventTime, setEventTime] = useState<string>('');
   const [editingEvent, setEditingEvent] = useState<ScheduleEvent | null>(null);
+  const [eventStartDate, setEventStartDate] = useState<string>(getTodayDate());
+  const [eventEndDate, setEventEndDate] = useState<string>(getTodayDate());
 
   // 로컬 스토리지에서 이벤트 불러오기 및 저장
   useEffect(() => {
@@ -60,8 +63,9 @@ function ScheduleManage() {
   }, [events]);
 
   const handleDateClick = (day: number) => {
-    const date = new Date(currentDate.getFullYear(), currentDate.getMonth(), day);
-    setSelectedDate(formatDate(date));
+    const date = formatDate(new Date(currentDate.getFullYear(), currentDate.getMonth(), day));
+    setEventStartDate(date);
+    setEventEndDate(date);
     setIsModalOpen(true);
     setEventTitle('');
     setEventDescription('');
@@ -70,7 +74,8 @@ function ScheduleManage() {
   };
 
   const handleEventEdit = (event: ScheduleEvent) => {
-    setSelectedDate(event.date);
+    setEventStartDate(event.startDate);
+    setEventEndDate(event.endDate);
     setEventTitle(event.title);
     setEventDescription(event.description);
     setEventTime(event.time || '');
@@ -89,32 +94,26 @@ function ScheduleManage() {
   };
 
   const handleSaveEvent = () => {
-    if (!selectedDate || !eventTitle.trim()) {
-      console.error("Date or title is missing.");
-      return;
-    }
-
+    if (!eventStartDate || !eventEndDate || !eventTitle.trim()) return;
     const eventData: Omit<ScheduleEvent, 'id'> = {
-      date: selectedDate,
+      startDate: eventStartDate,
+      endDate: eventEndDate,
       title: eventTitle.trim(),
       description: eventDescription.trim(),
       time: eventTime.trim(),
     };
-
     if (editingEvent) {
       setEvents(prevEvents =>
         prevEvents.map(event =>
           event.id === editingEvent.id ? { ...event, ...eventData } : event
         )
       );
-      console.log("Event updated successfully!");
     } else {
       const newEvent: ScheduleEvent = {
         id: Date.now().toString(),
         ...eventData,
       };
       setEvents(prevEvents => [...prevEvents, newEvent]);
-      console.log("Event added successfully!");
     }
     handleModalClose();
   };
@@ -132,7 +131,9 @@ function ScheduleManage() {
 
     for (let day = 1; day <= numDays; day++) {
       const fullDate = formatDate(new Date(year, month, day));
-      const dayEvents = events.filter(event => event.date === fullDate);
+      const dayEvents = events.filter(event =>
+        fullDate >= event.startDate && fullDate <= event.endDate
+      );
       const isToday = fullDate === getTodayDate();
       const isSelected = fullDate === selectedDate;
 
@@ -246,6 +247,33 @@ function ScheduleManage() {
               {editingEvent ? '이벤트 편집' : '새 이벤트 추가'}
             </h3>
             <p className="text-gray-600 mb-4">선택된 날짜: <span className="font-semibold">{selectedDate}</span></p>
+            <div className="mb-4 flex gap-2">
+              <div className="flex-1">
+                <label htmlFor="eventStartDate" className="block text-gray-700 text-sm font-bold mb-2">
+                  시작일:
+                </label>
+                <input
+                  type="date"
+                  id="eventStartDate"
+                  className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  value={eventStartDate}
+                  onChange={(e: ChangeEvent<HTMLInputElement>) => setEventStartDate(e.target.value)}
+                />
+              </div>
+              <div className="flex-1">
+                <label htmlFor="eventEndDate" className="block text-gray-700 text-sm font-bold mb-2">
+                  종료일:
+                </label>
+                <input
+                  type="date"
+                  id="eventEndDate"
+                  className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  value={eventEndDate}
+                  min={eventStartDate}
+                  onChange={(e: ChangeEvent<HTMLInputElement>) => setEventEndDate(e.target.value)}
+                />
+              </div>
+            </div>
             <div className="mb-4">
               <label htmlFor="eventTitle" className="block text-gray-700 text-sm font-bold mb-2">
                 제목:
@@ -293,7 +321,7 @@ function ScheduleManage() {
               <button
                 onClick={handleSaveEvent}
                 className="px-5 py-2 bg-blue-500 text-white rounded-lg shadow-md hover:bg-blue-600 transition duration-200"
-                disabled={!eventTitle.trim() || !selectedDate}
+                disabled={!eventTitle.trim() || !eventStartDate || !eventEndDate}
               >
                 {editingEvent ? '저장' : '추가'}
               </button>
@@ -305,4 +333,4 @@ function ScheduleManage() {
   );
 }
 
-export default ScheduleManage;
+export default CalendarView;

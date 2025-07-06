@@ -1,7 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import type { RefObject } from 'react';
 import * as d3 from 'd3';
-import {useImmer} from 'use-immer';
+import { saveAs } from 'file-saver';
 
 // 타입 정의
 type TreeNode = {
@@ -203,7 +202,7 @@ function TreeComp() {
       .enter().append("g")
       .attr("class", d => `node ${d.children ? "node--internal" : "node--leaf"}`)
       .attr("transform", d => `translate(${d.y},${d.x})`)
-      .on("click", (event, d: D3Node) => {
+      .on("click", (_: any, d: D3Node) => {
         setSelectedNodeId(d.data.id);
         setEditingNodeId(null);
         setShowContextMenu(false);
@@ -680,7 +679,7 @@ function TreeComp() {
 
   // Close context menu when clicking outside
   useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
+    const handleClickOutside = () => {
       if (showContextMenu) {
         // Check if the click is outside the context menu itself
         // This is a simplified check, a more robust solution might involve ref on context menu
@@ -697,9 +696,141 @@ function TreeComp() {
   // currentEditingD3Node will now be a raw D3 node object
   const currentEditingD3Node = editingNodeId ? d3TreeNodesRef.current?.find(d => d && d.data && d.data.id === editingNodeId) : null;
 
+  // Export Dialog 상태
+  const [showExportDialog, setShowExportDialog] = useState(false);
+  const [exportFileName, setExportFileName] = useState('tree-export.json');
+
+  // Import Dialog 상태
+  const [showImportDialog, setShowImportDialog] = useState(false);
+  const [importedJson, setImportedJson] = useState<any>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Export 버튼 클릭 핸들러
+  const handleExportClick = () => {
+    setShowExportDialog(true);
+  };
+
+  // Import 버튼 클릭 핸들러
+  const handleImportClick = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+      fileInputRef.current.click();
+    }
+  };
+
+  // 실제 Export 실행
+  const handleExportConfirm = () => {
+    if (!treeData) return;
+
+    // virtual root container를 제외한 실제 트리만 내보내기
+    let exportData: TreeNode | TreeNode[] | null = treeData;
+    if (treeData.id === "virtual-root-container") {
+      // children이 1개면 단일 객체, 2개 이상이면 배열로 내보냄
+      if (treeData.children.length === 1) {
+        exportData = treeData.children[0];
+      } else {
+        exportData = treeData.children;
+      }
+    }
+
+    const json = JSON.stringify(exportData, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    saveAs(blob, exportFileName || 'tree-export.json');
+    setShowExportDialog(false);
+  };
+
+  // 파일 선택 시 처리
+  const handleImportFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setImportError(null);
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const json = event.target?.result as string;
+        const parsed = JSON.parse(json);
+        setImportedJson(parsed);
+        setShowImportDialog(true); // 파일 선택 후 다이얼로그 열기
+      } catch (err) {
+        setImportError("JSON 파싱 오류: " + (err as Error).message);
+        setImportedJson(null);
+        setShowImportDialog(true); // 오류가 있어도 다이얼로그 열기
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  // 실제 Import 실행
+  const handleImportConfirm = () => {
+    if (!importedJson) {
+      setImportError("파일을 선택하고 올바른 JSON을 업로드하세요.");
+      return;
+    }
+    // 임포트 파일에는 virtual root가 없다고 가정
+    let newTree: TreeNode;
+    if (Array.isArray(importedJson)) {
+      newTree = {
+        id: "virtual-root-container",
+        name: "",
+        children: importedJson,
+      };
+    } else if (
+      importedJson &&
+      typeof importedJson === "object" &&
+      importedJson.id &&
+      importedJson.name &&
+      Array.isArray(importedJson.children)
+    ) {
+      newTree = {
+        id: "virtual-root-container",
+        name: "",
+        children: [importedJson],
+      };
+    } else {
+      setImportError("올바른 트리 JSON 형식이 아닙니다.");
+      return;
+    }
+
+    setTreeData(newTree);
+    setHistory([newTree]);
+    setHistoryIndex(0);
+    setSelectedNodeId(null);
+    setShowImportDialog(false);
+    setImportedJson(null);
+    setImportError(null);
+  };
+
   return (
     <div className="flex flex-col h-screen font-inter bg-gray-100 p-4">
-      <h1 className="text-2xl font-bold text-center mb-4 text-indigo-700">인터랙티브 트리 컴포넌트</h1>
+      <div className="flex items-center justify-between mb-4">
+        <h1 className="text-2xl font-bold text-center text-indigo-700">인터랙티브 트리 컴포넌트</h1>
+        <div className="flex gap-2">
+          {/* 숨겨진 파일 input (항상 1개만, 다이얼로그 밖에 둡니다) */}
+<input
+  type="file"
+  accept="application/json"
+  ref={fileInputRef}
+  onChange={handleImportFileChange}
+  style={{ display: 'none' }}
+/>
+
+<button
+  className="px-4 py-1 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 transition"
+  onClick={handleImportClick}
+  type="button"
+>
+  Import
+</button>
+          <button
+            className="px-4 py-1 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 transition"
+            onClick={handleExportClick}
+            type="button"
+          >
+            Export
+          </button>
+        </div>
+      </div>
 
       {/* Selected Node Display */}
       {selectedNodeId && (
@@ -847,6 +978,72 @@ function TreeComp() {
                 className="px-4 py-2 bg-red-500 text-white rounded-md hover:bg-red-600 transition duration-150 ease-in-out"
               >
                 확인
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Export Dialog */}
+      {showExportDialog && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex justify-center items-center z-50">
+          <div className="bg-white p-6 rounded-lg shadow-xl w-96">
+            <h2 className="text-xl font-bold mb-4 text-indigo-700">Export Tree JSON</h2>
+            <label className="block mb-2 text-gray-700">
+              파일 이름:
+              <input
+                type="text"
+                value={exportFileName}
+                onChange={e => setExportFileName(e.target.value)}
+                className="mt-1 w-full border border-gray-300 rounded px-2 py-1"
+                placeholder="tree-export.json"
+              />
+            </label>
+            <div className="flex justify-end gap-2 mt-4">
+              <button
+                onClick={() => setShowExportDialog(false)}
+                className="px-4 py-2 bg-gray-300 text-gray-800 rounded-md hover:bg-gray-400 transition"
+              >
+                취소
+              </button>
+              <button
+                onClick={handleExportConfirm}
+                className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition"
+              >
+                내보내기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Import Dialog */}
+      {showImportDialog && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex justify-center items-center z-50">
+          <div className="bg-white p-6 rounded-lg shadow-xl w-96">
+            <h2 className="text-xl font-bold mb-4 text-indigo-700">Import Tree JSON</h2>
+            {/* 파일 input은 여기서 삭제 */}
+            {importError && (
+              <div className="text-red-600 text-sm mb-2">{importError}</div>
+            )}
+            {importedJson && (
+              <div className="bg-gray-100 border rounded p-2 text-xs max-h-32 overflow-auto mb-2">
+                <pre>{JSON.stringify(importedJson, null, 2)}</pre>
+              </div>
+            )}
+            <div className="flex justify-end gap-2 mt-4">
+              <button
+                onClick={() => setShowImportDialog(false)}
+                className="px-4 py-2 bg-gray-300 text-gray-800 rounded-md hover:bg-gray-400 transition"
+              >
+                취소
+              </button>
+              <button
+                onClick={handleImportConfirm}
+                disabled={!importedJson}
+                className={`px-4 py-2 rounded-md transition text-gray-500 ${importedJson ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-gray-400 cursor-not-allowed'}`}
+              >
+                Tree에 반영하기
               </button>
             </div>
           </div>

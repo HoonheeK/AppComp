@@ -1,7 +1,10 @@
 import React, { useState } from 'react';
-import { Home, LayoutDashboard, Settings, Users, ChevronRight, ChevronDown, Folder, FileText, BarChart, Bell, Component, CalendarCheck, Network } from 'lucide-react'; // 아이콘 임포트
-import ScheduleManage from './components/ScheduleManage'; // ScheduleManage 컴포넌트 임포트
+import { Database, FolderSync, FileStack, Home, LayoutDashboard, Settings, Users, ChevronRight, ChevronDown, Folder, FileText, BarChart, Bell, Component, CalendarCheck, Network, ChartColumn, Package } from 'lucide-react'; // 아이콘 임포트
+import CalendarView from './components/CalendarView'; // ScheduleManage 컴포넌트 임포트
 import TreeComp from './components/TreeComp'; // TreeComp 컴포넌트 임포트
+import ChartComp from './components/ChartComp'; // ChartComp 컴포넌트 임포트
+import JsonToText from './components/JsonToText'; // JsonToText 컴포넌트 임포트
+import ScheduleChart from './components/ScheduleChart'; // ScheduleChart 컴포넌트 임포트
 
 // 내비게이션 항목의 타입을 정의합니다.
 interface NavItem {
@@ -41,12 +44,60 @@ const navItems: NavItem[] = [
       {
         name: 'Schedule 관리',
         icon: CalendarCheck,
-        path: '/components/ScheduleManage',
+        children: [
+          {
+            name: 'Calendar View',
+            icon: CalendarCheck,
+            path: '/components/CalendarView',
+          },
+          {
+            name: 'Schedule Chart',
+            icon: CalendarCheck,
+            path: '/components/ScheduleChart',
+          },
+        ],
       },
       {
         name: 'Tree 관리',
         icon: Network,
         path: '/components/TreeComp',
+      },
+      {
+        name: 'Chart 관리',
+        icon: ChartColumn,
+        path: '/components/ChartComp',
+      },
+    ],
+  },
+  {
+    name: 'Platform Comp 관리',
+    icon: Package,
+    children: [
+      {
+        name: 'File Exchange',
+        icon: FileStack,
+        children: [
+          {
+            name: 'JSON to Text',
+            icon: FileStack,
+            path: '/components/JsonToText',
+          },
+          {
+            name: 'JSON to Excel',
+            icon: FileStack,
+            path: '/components/JsonToExcel',
+          }
+        ],
+      },
+      {
+        name: 'Database 관리',
+        icon: Database,
+        path: '/components/Database',
+      },
+      {
+        name: 'Import/Export',
+        icon: FolderSync,
+        path: '/components/ImportExport',
       },
     ],
   },
@@ -102,16 +153,33 @@ const navItems: NavItem[] = [
 // SidebarItem 컴포넌트는 단일 내비게이션 항목을 렌더링합니다.
 interface SidebarItemProps {
   item: NavItem;
-  level: number; // 중첩 레벨을 나타냅니다 (들여쓰기용)
-  activePath: string; // 현재 활성화된 경로
-  onNavigate: (path: string) => void; // 경로 변경 핸들러
-  openMenus: string[]; // 현재 열려 있는 메뉴들의 이름 배열
-  toggleMenu: (name: string) => void; // 메뉴 토글 핸들러
+  level: number;
+  activePath: string;
+  onNavigate: (path: string) => void;
+  openMenus: string[];
+  toggleMenu: (name: string) => void;
+  parentFontSizeRem?: number; // 부모 글자 크기 rem 단위
+  childFontScale?: number;    // 자식 글자 크기 비율 (예: 0.85)
 }
 
-const SidebarItem: React.FC<SidebarItemProps> = ({ item, level, activePath, onNavigate, openMenus, toggleMenu }) => {
-  const isOpen = item.children && openMenus.includes(item.name); // 자식 메뉴가 있고 현재 열려 있는지 확인
-  const isActive = item.path === activePath; // 현재 항목이 활성화되었는지 확인
+const SidebarItem: React.FC<SidebarItemProps> = ({
+  item,
+  level,
+  activePath,
+  onNavigate,
+  openMenus,
+  toggleMenu,
+  parentFontSizeRem = 1.0,
+  childFontScale = 0.85,
+}) => {
+  const isOpen = item.children && openMenus.includes(item.name);
+  const isActive = item.path === activePath;
+
+  // 글자 크기 계산: 최상위는 parentFontSizeRem, 하위는 scale 적용
+  const fontSize =
+    level === 0
+      ? `${parentFontSizeRem}rem`
+      : `${parentFontSizeRem * Math.pow(childFontScale, level)}rem`;
 
   // 클릭 핸들러: 경로가 있으면 이동, 자식 메뉴가 있으면 토글
   const handleClick = () => {
@@ -129,13 +197,14 @@ const SidebarItem: React.FC<SidebarItemProps> = ({ item, level, activePath, onNa
         className={`
           flex items-center justify-between p-2 rounded-lg cursor-pointer transition-colors duration-200
           ${isActive ? 'bg-indigo-700 text-white' : 'text-gray-300 hover:bg-gray-700'}
-          ${level > 0 ? `ml-${level * 4}` : ''} // 중첩 레벨에 따라 들여쓰기
+          ${level > 0 ? `ml-${level * 4}` : ''}
         `}
         onClick={handleClick}
+        style={{ fontSize }}
       >
         <div className="flex items-center">
           {item.icon && <item.icon size={20} className="mr-3" />}
-          <span className="text-sm font-medium">{item.name}</span>
+          <span className="font-medium">{item.name}</span>
         </div>
         {item.children && (
           <div className="ml-auto">
@@ -156,6 +225,8 @@ const SidebarItem: React.FC<SidebarItemProps> = ({ item, level, activePath, onNa
               onNavigate={onNavigate}
               openMenus={openMenus}
               toggleMenu={toggleMenu}
+              parentFontSizeRem={parentFontSizeRem}
+              childFontScale={childFontScale}
             />
           ))}
         </div>
@@ -166,14 +237,23 @@ const SidebarItem: React.FC<SidebarItemProps> = ({ item, level, activePath, onNa
 
 // Sidebar 컴포넌트
 interface SidebarProps {
-  isOpen: boolean; // 사이드바가 열려 있는지 여부
-  toggleSidebar: () => void; // 사이드바 토글 핸들러
-  activePath: string; // 현재 활성화된 경로
-  onNavigate: (path: string) => void; // 경로 변경 핸들러
+  isOpen: boolean;
+  toggleSidebar: () => void;
+  activePath: string;
+  onNavigate: (path: string) => void;
+  parentFontSizeRem?: number; // 추가: 부모 글자 크기 rem
+  childFontScale?: number;    // 추가: 자식 글자 크기 비율
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ isOpen, toggleSidebar, activePath, onNavigate }) => {
-  const [openMenus, setOpenMenus] = useState<string[]>([]); // 열려 있는 다단계 메뉴들의 이름
+const Sidebar: React.FC<SidebarProps> = ({
+  isOpen,
+  toggleSidebar,
+  activePath,
+  onNavigate,
+  parentFontSizeRem = 1.0, // 1rem = 16px
+  childFontScale = 0.85,    // 자식은 부모의 85%
+}) => {
+  const [openMenus, setOpenMenus] = useState<string[]>([]);
 
   // 메뉴 토글 핸들러
   const toggleMenu = (menuName: string) => {
@@ -227,6 +307,8 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, toggleSidebar, activePath, on
                 onNavigate={onNavigate}
                 openMenus={openMenus}
                 toggleMenu={toggleMenu}
+                parentFontSizeRem={parentFontSizeRem}
+                childFontScale={childFontScale}
               />
             </li>
           ))}
@@ -291,10 +373,16 @@ const App: React.FC = () => {
         {/* 실제 콘텐츠 영역 */}
         <main className="flex-1 p-6">
           <div className="bg-white rounded-lg shadow-lg p-8">
-            {activePath === '/components/ScheduleManage' ? (
-              <ScheduleManage />
+            {activePath === '/components/CalendarView' ? (
+              <CalendarView />
             ) : activePath === '/components/TreeComp' ? (
               <TreeComp />
+            ) : activePath === '/components/ChartComp' ? (
+              <ChartComp />
+            ) : activePath === '/components/JsonToText' ? (
+              <JsonToText />
+            ) : activePath === '/components/ScheduleChart' ? (
+              <ScheduleChart />              
             ) : (
               <>
                 <h2 className="text-3xl font-bold text-gray-800 mb-4">환영합니다!</h2>
