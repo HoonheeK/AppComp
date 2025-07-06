@@ -142,7 +142,7 @@ const HISTORY_LIMIT = 20;
 const ScheduleChart: React.FC = () => {
   const [tasks, setTasks] = useState<Task[]>(
     [
-      { id: '1', name: '프로젝트 계획', start: '2025-07-01', end: '2025-07-05', progress: 100, dependencies: [] },
+      { id: '1', name: '프로젝트 계획 ABCDEFGGEEFFSFASFF', start: '2025-07-01', end: '2025-07-05', progress: 100, dependencies: [] },
       { id: '2', name: '요구사항 수집', start: '2025-07-06', end: '2025-07-10', progress: 70, dependencies: ['1'] },
       { id: '3', name: '디자인', start: '2025-07-11', end: '2025-07-18', progress: 40, dependencies: ['2'] },
       { id: '4', name: '개발', start: '2025-07-19', end: '2025-07-30', progress: 10, dependencies: ['3'] },
@@ -156,9 +156,8 @@ const ScheduleChart: React.FC = () => {
 
   const chartYear = new Date().getFullYear();
 //   const todayDate = new Date().getDay();
-  const startDate = new Date(`${chartYear-1}-06-28`);
-  const endDate = new Date(`${chartYear+1}-08-15`);
-  const totalDays = getDaysBetween(startDate, endDate) + 1;
+  // const startDate = new Date(`${chartYear-1}-06-28`);
+  // const endDate = new Date(`${chartYear+1}-08-15`);
 
   const dayWidth = 15;
   const taskHeight = 40;
@@ -186,13 +185,64 @@ const ScheduleChart: React.FC = () => {
   const [newTaskEnd, setNewTaskEnd] = useState(formatDate(new Date()));
   const [newTaskProgress, setNewTaskProgress] = useState(0);
 
+  // 1. 열 너비 상태 추가
+const [colWidths, setColWidths] = useState<number[]>([0, 0, 0]);
+const headerRefs = [useRef<HTMLDivElement>(null), useRef<HTMLDivElement>(null), useRef<HTMLDivElement>(null)];
+const cellRefs = tasks.map(() => [useRef<HTMLDivElement>(null), useRef<HTMLDivElement>(null), useRef<HTMLDivElement>(null)]);
+
+// 2. 열 너비 계산 useEffect
+useEffect(() => {
+  // 헤더와 각 행의 셀 중 가장 넓은 값으로 colWidths 설정
+  const widths = [0, 0, 0];
+  // 헤더
+  headerRefs.forEach((ref, i) => {
+    if (ref.current) widths[i] = ref.current.offsetWidth;
+  });
+  // 데이터
+  cellRefs.forEach(refArr => {
+    refArr.forEach((ref, i) => {
+      if (ref.current) widths[i] = Math.max(widths[i], ref.current.offsetWidth);
+    });
+  });
+  setColWidths(widths);
+  // eslint-disable-next-line
+}, [tasks, newTaskName, newTaskStart, newTaskEnd, newTaskProgress]);
+
+  // 표시 영역 계산 함수 추가
+  function getChartRange(tasks: Task[]): { chartStartDate: Date; chartEndDate: Date } {
+    if (tasks.length > 0) {
+      // 모든 Task의 시작/종료일 중 가장 빠른/늦은 날짜 계산
+      const minDate = new Date(
+        Math.min(...tasks.map(t => new Date(t.start).getTime()))
+      );
+      const maxDate = new Date(
+        Math.max(...tasks.map(t => new Date(t.end).getTime()))
+      );
+      return {
+        chartStartDate: addDays(minDate, -14), // 2주(14일) 앞
+        chartEndDate: addDays(maxDate, 14),    // 2주(14일) 뒤
+      };
+    } else {
+      // Task가 없으면 오늘 기준 ±1.5개월(약 22일)
+      const today = new Date();
+      return {
+        chartStartDate: addDays(today, -22),
+        chartEndDate: addDays(today, 22),
+      };
+    }
+  }
+
+  // 표시 영역 계산
+  const { chartStartDate, chartEndDate } = getChartRange(tasks);
+  const totalDays = getDaysBetween(chartStartDate, chartEndDate) + 1;
+
   const getDates = useCallback((): string[] => {
     const dates: string[] = [];
     for (let i = 0; i < totalDays; i++) {
-      dates.push(formatDate(addDays(startDate, i)));
+      dates.push(formatDate(addDays(chartStartDate, i)));
     }
     return dates;
-  }, [startDate, totalDays]);
+  }, [chartStartDate, totalDays]);
 
   const dates = getDates();
 
@@ -200,14 +250,14 @@ const ScheduleChart: React.FC = () => {
     const taskStart = new Date(task.start);
     const taskEnd = new Date(task.end);
 
-    const startOffsetDays = getDaysBetween(startDate, taskStart);
+    const startOffsetDays = getDaysBetween(chartStartDate, taskStart);
     const durationDays = getDaysBetween(taskStart, taskEnd) + 1;
 
     const x = startOffsetDays * dayWidth;
     const width = durationDays * dayWidth;
 
     return { x, width };
-  }, [startDate, dayWidth]);
+  }, [chartStartDate, dayWidth]);
 
   const handleMouseDown = useCallback(
     (e: MouseEvent<HTMLDivElement>, taskId: string, mode: 'move' | 'resize-left' | 'resize-right') => {
@@ -280,14 +330,6 @@ const ScheduleChart: React.FC = () => {
       rightScrollRef.current.scrollTop = leftScrollRef.current.scrollTop;
     }
     isScrollingLeft.current = false;
-  }, []);
-
-  const handleRightScroll = useCallback(() => {
-    if (!isScrollingLeft.current && leftScrollRef.current && rightScrollRef.current) {
-      isScrollingRight.current = true;
-      leftScrollRef.current.scrollTop = rightScrollRef.current.scrollTop;
-    }
-    isScrollingRight.current = false;
   }, []);
 
   const renderDependencyLines = useCallback(() => {
@@ -638,29 +680,86 @@ const getTimelineHeaderRows = useCallback(() => {
       <div className="flex bg-white rounded-lg shadow-xl overflow-hidden w-full max-w-6xl" style={{ maxHeight: 'calc(100vh - 150px)' }}>
         {/* 작업 이름 패널 */}
         <div className="w-1/4 bg-gray-50 border-r border-gray-200 p-4 flex flex-col">
-          <div className="grid grid-cols-3 gap-2 font-semibold text-gray-700 mb-2 h-10 items-center flex-shrink-0">
-            <div>작업 이름</div>
-            <div className="text-center">시작일</div>
-            <div className="text-center">기간</div>
+          {/* 3행 헤더: 연도/월/일과 높이 맞춤 */}
+          <div>
+            <div style={{ height: 28 }} />
+            <div style={{ height: 24 }} />
+            <div className="grid grid-cols-3 font-semibold text-gray-700 h-10 items-center flex-shrink-0" style={{ height: 22 }}>
+              <div
+                ref={headerRefs[0]}
+                className="border-r border-gray-200 pl-2"
+                style={{ width: colWidths[0] || undefined, minWidth: colWidths[0] || undefined, maxWidth: colWidths[0] || undefined }}
+              >작업 이름</div>
+              <div
+                ref={headerRefs[1]}
+                className="text-center border-r border-gray-200"
+                style={{ width: colWidths[1] || undefined, minWidth: colWidths[1] || undefined, maxWidth: colWidths[1] || undefined }}
+              >시작일</div>
+              <div
+                ref={headerRefs[2]}
+                className="text-center"
+                style={{ width: colWidths[2] || undefined, minWidth: colWidths[2] || undefined, maxWidth: colWidths[2] || undefined }}
+              >기간</div>
+            </div>
           </div>
-          <div className="overflow-y-auto" ref={leftScrollRef} onScroll={handleLeftScroll} style={{ flexGrow: 1 }} onClick={handleTaskListBackgroundClick}>
-            {tasks.map((task) => (
+          <div
+            className="overflow-y-auto overflow-x-auto"
+            ref={leftScrollRef}
+            onScroll={handleLeftScroll}
+            style={{ flexGrow: 1, minWidth: 0 }}
+            onClick={handleTaskListBackgroundClick}
+          >
+            {tasks.map((task, rowIdx) => (
               <div
                 key={task.id}
-                className={`grid grid-cols-3 gap-2 items-center h-10 px-3 py-2 text-sm border-b border-gray-200 last:border-b-0 cursor-pointer
+                className={`grid grid-cols-3 items-center h-10 px-3 py-2 text-sm border-b border-gray-200 last:border-b-0 cursor-pointer
                   ${selectedTaskId === task.id ? 'bg-yellow-100' : 'bg-transparent'}
                 `}
-                style={{ height: taskHeight + rowGap }}
+                style={{ height: taskHeight + rowGap, minWidth: colWidths.reduce((a, b) => a + b, 0) }}
                 onClick={e => {
                   e.stopPropagation();
                   setSelectedTaskId(task.id);
                 }}
                 onContextMenu={e => handleTaskContextMenu(e, task.id)}
               >
-                <div>{task.name}</div>
-                {/* <div className="text-center">{task.start.substring(5)}</div> */}
-                <div className="text-center">{task.start}</div>
-                <div className="text-center">{getDaysBetween(task.start, task.end) + 1}일</div>
+                <div
+                  ref={cellRefs[rowIdx][0]}
+                  className="border-r border-gray-200 pl-2"
+                  style={{
+                    alignContent : 'flex-start',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    width: colWidths[0] || undefined,
+                    minWidth: colWidths[0] || undefined,
+                    maxWidth: colWidths[0] || undefined,
+                  }}
+                  title={task.name}
+                >
+                  {task.name}
+                </div>
+                <div
+                  ref={cellRefs[rowIdx][1]}
+                  className="text-center border-r border-gray-200"
+                  style={{
+                    width: colWidths[1] || undefined,
+                    minWidth: colWidths[1] || undefined,
+                    maxWidth: colWidths[1] || undefined,
+                  }}
+                >
+                  {task.start}
+                </div>
+                <div
+                  ref={cellRefs[rowIdx][2]}
+                  className="text-center"
+                  style={{
+                    width: colWidths[2] || undefined,
+                    minWidth: colWidths[2] || undefined,
+                    maxWidth: colWidths[2] || undefined,
+                  }}
+                >
+                  {getDaysBetween(task.start, task.end) + 1}일
+                </div>
               </div>
             ))}
           </div>
@@ -673,6 +772,7 @@ const getTimelineHeaderRows = useCallback(() => {
             ref={timelineHeaderRef}
             className="sticky top-0 z-10 bg-gray-50 flex-shrink-0 overflow-x-hidden border-b border-gray-200"
             style={{ overflowX: 'auto' }}
+            onScroll={handleHeaderScroll}
           >
             <div className="flex" style={{ borderBottom: '1px solid #e5e7eb' }}>
               {/* Year Row */}
@@ -771,6 +871,15 @@ const getTimelineHeaderRows = useCallback(() => {
               {tasks.map((task) => {
                 const { x, width } = getTaskPositionAndWidth(task);
                 const isSelected = selectedTaskId === task.id;
+                // 막대에 표시될 텍스트
+                const barText = `${task.name} (${task.progress}%)`;
+
+                // 임시 span을 사용해 텍스트 width 측정 (canvas API 등으로도 가능)
+                // 여기서는 대략적으로 width/8(px)보다 길면 넘친다고 가정
+                const estimatedCharWidth = 8; // px, 폰트에 따라 조정
+                const barTextWidth = barText.length * estimatedCharWidth;
+                const isOverflow = barTextWidth > width;
+
                 return (
                   <div
                     key={task.id}
@@ -784,6 +893,7 @@ const getTimelineHeaderRows = useCallback(() => {
                       width: width,
                       height: taskHeight,
                       zIndex: isSelected ? 2 : 1,
+                      minWidth: 0,
                     }}
                     onClick={e => {
                       e.stopPropagation();
@@ -796,11 +906,42 @@ const getTimelineHeaderRows = useCallback(() => {
                       className="absolute top-0 left-0 h-full bg-indigo-700 rounded-md"
                       style={{ width: `${task.progress}%`, opacity: isSelected ? 0.5 : 1 }}
                     ></div>
-                    <span className="absolute inset-0 flex items-center justify-center text-xs font-bold pointer-events-none"
-                      style={{ color: isSelected ? '#b45309' : '#fff' }}
+                    <span
+                      className="absolute inset-0 flex items-center justify-center text-xs font-bold pointer-events-none"
+                      style={{
+                        color: isSelected ? '#b45309' : '#fff',
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        padding: '0 6px',
+                        width: '100%',
+                        minWidth: 0,
+                      }}
+                      title={barText}
                     >
-                      {task.name} ({task.progress}%)
+                      {!isOverflow ? barText:''}
                     </span>
+                    {/* 막대 밖 오른쪽에 전체 이름 표시 (넘칠 때만) */}
+                    {isOverflow && (
+                      <span
+                        className="absolute text-xs font-bold pointer-events-none"
+                        style={{
+                          left: width + 6, // 막대 오른쪽 바깥
+                          top: '50%',
+                          transform: 'translateY(-50%)',
+                          color: '#111',
+                          background: 'rgba(255,255,255,0.85)',
+                          padding: '0 4px',
+                          borderRadius: 3,
+                          whiteSpace: 'nowrap',
+                          zIndex: 10,
+                          boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+                          fontWeight: 700,
+                        }}
+                      >
+                        {barText}
+                      </span>
+                    )}
 
                     {/* 드래그 핸들 (이동) */}
                     <div
