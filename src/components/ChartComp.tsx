@@ -579,7 +579,7 @@ const ChartComp = () => {
     };
 
     return (
-        <div className="min-h-screen bg-gray-100 flex flex-col items-center justify-center p-4 font-sans">
+        <div className="min-h-screen bg-gray-100 flex flex-col items-center justify-center p-4 font-sans w-[80vw]">
             <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-6xl">
                 <h1 className="text-3xl font-bold text-gray-800 mb-6 text-center">Nivo 다양한 차트 데모</h1>
 

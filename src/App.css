@@ -40,3 +40,8 @@
 .read-the-docs {
   color: #888;
 }
+
+.link--selected {
+  stroke: #f59e42 !important;
+  stroke-width: 4 !important;
+}

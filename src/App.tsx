@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Database, FolderSync, FileStack, Home, LayoutDashboard, Settings, Users, ChevronRight, ChevronDown, Folder, FileText, BarChart, Bell, Component, CalendarCheck, Network, ChartColumn, Package } from 'lucide-react'; // 아이콘 임포트
 import CalendarView from './components/CalendarView'; // ScheduleManage 컴포넌트 임포트
-import TreeComp from './components/TreeComp'; // TreeComp 컴포넌트 임포트
+import TreeComp from './components/TreeChart/TreeComp'; // TreeComp 컴포넌트 임포트
 import ChartComp from './components/ChartComp'; // ChartComp 컴포넌트 임포트
 import JsonToText from './components/JsonToText'; // JsonToText 컴포넌트 임포트
 import ScheduleChart from './components/ScheduleChart/ScheduleChart'; // ScheduleChart 컴포넌트 임포트

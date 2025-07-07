@@ -535,10 +535,35 @@ const ScheduleChart: React.FC = () => {
       if (e.key === 'Delete' && selectedTaskId) {
         handleDeleteTask(selectedTaskId);
       }
+
+      // 좌우 방향키로 Task 이동
+      if (selectedTaskId && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+        setTasks(prevTasks =>
+          prevTasks.map(task => {
+            if (task.id !== selectedTaskId) return task;
+            const move =
+              timelineScale === 'day'
+                ? (e.key === 'ArrowLeft' ? -1 : 1)
+                : (e.key === 'ArrowLeft' ? -7 : 7);
+            const newStart = addDays(new Date(task.start), move);
+            const newEnd = addDays(new Date(task.end), move);
+            return {
+              ...task,
+              start: formatDate(newStart),
+              end: formatDate(newEnd),
+            };
+          })
+        );
+        // 이동 후 스크롤 중앙 맞추기 (setTimeout으로 렌더 후 실행)
+        setTimeout(() => {
+          scrollTaskToCenter(selectedTaskId);
+        }, 0);
+      }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedTaskId, handleDeleteTask]);
+    // eslint-disable-next-line
+  }, [selectedTaskId, handleDeleteTask, timelineScale, tasks]);
 
   // Context Menu 열기
   const handleTaskContextMenu = (e: React.MouseEvent, taskId: string) => {
@@ -647,9 +672,25 @@ const ScheduleChart: React.FC = () => {
       ? totalDays * dayWidth
       : getAllWeekDates().length * weekCellWidth;
 
+  // 특정 Task가 중앙에 오도록 스크롤
+  function scrollTaskToCenter(taskId: string) {
+    if (!rightScrollRef.current) return;
+    const task = tasks.find(t => t.id === taskId);
+    if (!task) return;
+    const { x, width } = getTaskPositionAndWidth(task);
+    const scrollArea = rightScrollRef.current;
+    const center = x + width / 2 - scrollArea.clientWidth / 2;
+    scrollArea.scrollLeft = Math.max(0, center);
+    // 타임라인 헤더도 동기화
+    if (timelineHeaderRef.current) {
+      timelineHeaderRef.current.scrollLeft = scrollArea.scrollLeft;
+    }
+  }
+
   return (
-    <div className="p-4 bg-gray-100 min-h-screen font-inter flex flex-col items-center">
-      <div className="flex justify-between items-center w-full max-w-6xl mb-6">
+    <div className="p-4 bg-gray-100 min-h-screen font-inter flex flex-col items-center w-[80vw]">
+      {/* <div className="flex justify-between items-center w-full max-w-6xl mb-6">  */}
+      <div className="flex justify-between items-center w-full mb-6">
         <h1 className="text-3xl font-bold text-gray-800">React 간트 차트</h1>
         <div className="flex gap-2">
           <button
@@ -771,7 +812,8 @@ const ScheduleChart: React.FC = () => {
         />
       )}
 
-      <div className="flex bg-white rounded-lg shadow-xl overflow-hidden w-full max-w-6xl" style={{ maxHeight: 'calc(100vh - 150px)' }}>
+      {/* <div className="flex bg-white rounded-lg shadow-xl overflow-hidden w-full max-w-6xl" style={{ maxHeight: 'calc(100vh - 150px)' }}> */}
+      <div className="flex bg-white rounded-lg shadow-xl overflow-hidden w-full" style={{ maxHeight: 'calc(100vh - 150px)' }}>
         {/* 작업 이름 패널 */}
         <div className="w-1/4 bg-gray-50 border-r border-gray-200 p-4 flex flex-col">
           {/* 3행 헤더: 연도/월/일과 높이 맞춤 */}

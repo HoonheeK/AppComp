@@ -184,7 +184,7 @@ function CalendarView() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-100 font-inter p-4 flex flex-col items-center">
+    <div className="min-h-screen bg-gray-100 font-inter p-4 flex flex-col items-center w-[80vw]">
       <style>
         {`
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');

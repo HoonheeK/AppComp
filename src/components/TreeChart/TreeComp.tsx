@@ -1,6 +1,7 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import * as d3 from 'd3';
 import { saveAs } from 'file-saver';
+import { useTreeCommands } from './useTreeCommands';
 
 // 타입 정의
 type TreeNode = {
@@ -41,7 +42,7 @@ const initialTreeData: TreeNode = {
 
 function TreeComp() {
   const [treeData, setTreeData] = useState<TreeData>(initialTreeData);
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
 
   // State for inline editing
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
@@ -105,6 +106,10 @@ function TreeComp() {
     });
     setTreeData(newTreeState);
   }, [historyIndex]);
+
+  // State for selected link (edge)
+  const [selectedLink, setSelectedLink] = useState<{ sourceId: string; targetId: string } | null>(null);
+
 
   // Update dimensions on window resize
   useEffect(() => {
@@ -189,13 +194,88 @@ function TreeComp() {
     g.selectAll(".link")
       .data(treeNodes.links().filter(d => d.source.data.id !== "virtual-root-container"))
       .enter().append("path")
-      .attr("class", "link")
+      .attr("class", d => {
+        const isSelected =
+          selectedLink &&
+          selectedLink.sourceId === d.source.data.id &&
+          selectedLink.targetId === d.target.data.id;
+        return "link" + (isSelected ? " link--selected" : "");
+      })
       .attr("d", d3.linkHorizontal<d3.HierarchyPointLink<TreeNode>, d3.HierarchyPointNode<TreeNode>>()
         .x(d => d.y)
         .y(d => d.x))
       .attr("fill", "none")
-      .attr("stroke", "#ccc")
-      .attr("stroke-width", 1.5);
+      .attr("stroke", d =>
+        selectedLink &&
+          selectedLink.sourceId === d.source.data.id &&
+          selectedLink.targetId === d.target.data.id
+          ? "#f59e42"
+          : "#ccc"
+      )
+      .attr("stroke-width", d =>
+        selectedLink &&
+          selectedLink.sourceId === d.source.data.id &&
+          selectedLink.targetId === d.target.data.id
+          ? 6 // 더 굵게
+          : 3 // 더 굵게
+      )
+      .attr("marker-end", "url(#arrowhead)") // 화살표 마커
+      .style("cursor", "pointer")
+      .on("click", function (event, d) {
+        event.stopPropagation();
+        setSelectedLink({
+          sourceId: d.source.data.id,
+          targetId: d.target.data.id,
+        });
+        setSelectedNodeIds([]); // 노드 선택 해제
+        setEditingNodeId(null);
+        setShowContextMenu(false);
+      })
+      .on("contextmenu", function (event, d) {
+        event.preventDefault();
+        setSelectedLink({
+          sourceId: d.source.data.id,
+          targetId: d.target.data.id,
+        });
+        setSelectedNodeIds([]);
+        setEditingNodeId(null);
+        setContextMenuType('link');
+        setContextMenuPosition({ x: event.pageX, y: event.pageY });
+        setShowContextMenu(true);
+      });
+
+    // SVG에 화살표 마커(defs) 추가
+    svg.select("defs").remove(); // 중복 방지
+    const defs = svg.append("defs");
+    defs.append("marker")
+      .attr("id", "arrowhead")
+      .attr("viewBox", "0 -8 20 16") // 더 큰 viewBox
+      .attr("refX", 18) // 선 끝에 맞추기 (더 크게)
+      .attr("refY", 0)
+      .attr("markerWidth", 6) // 더 크게
+      .attr("markerHeight", 6) // 더 크게
+      .attr("orient", "auto")
+      .attr("markerUnits", "strokeWidth")
+      .append("path")
+      .attr("d", "M0,-8L20,0L0,8") // 더 큰 삼각형
+      .attr("fill", "#ccc");
+
+    // 선택된 링크는 화살표 색상도 강조
+    if (selectedLink) {
+      defs.append("marker")
+        .attr("id", "arrowhead-selected")
+        .attr("viewBox", "0 -8 20 16")
+        .attr("refX", 18)
+        .attr("refY", 0)
+        .attr("markerWidth", 6)
+        .attr("markerHeight", 6)
+        .attr("orient", "auto")
+        .attr("markerUnits", "strokeWidth")
+        .append("path")
+        .attr("d", "M0,-8L20,0L0,8")
+        .attr("fill", "#f59e42");
+      g.selectAll(".link--selected").attr("marker-end", "url(#arrowhead-selected)");
+    }
 
     const node = g.selectAll<SVGGElement, D3Node>(".node")
       .data(treeNodes.descendants().filter(d => d.data.id !== "virtual-root-container"))
@@ -203,13 +283,13 @@ function TreeComp() {
       .attr("class", d => `node ${d.children ? "node--internal" : "node--leaf"}`)
       .attr("transform", d => `translate(${d.y},${d.x})`)
       .on("click", (_: any, d: D3Node) => {
-        setSelectedNodeId(d.data.id);
+        setSelectedNodeIds([d.data.id]);
         setEditingNodeId(null);
         setShowContextMenu(false);
       })
       .on("contextmenu", (event, d: D3Node) => {
         event.preventDefault();
-        setSelectedNodeId(d.data.id);
+        setSelectedNodeIds([d.data.id]);
         setEditingNodeId(null);
         setContextMenuType('node');
         setContextMenuPosition({ x: event.pageX, y: event.pageY });
@@ -218,6 +298,25 @@ function TreeComp() {
       .on("mouseover", (event, d: D3Node) => {
         setShowTooltip(true);
         setTooltipContent(d.data.name);
+
+        // SVG 좌표를 브라우저 좌표로 변환
+        const svg = svgRef.current;
+        if (svg) {
+          const pt = svg.createSVGPoint();
+          pt.x = d.y;
+          pt.y = d.x;
+          const screenCTM = svg.getScreenCTM();
+          if (screenCTM) {
+            const transformed = pt.matrixTransform(screenCTM);
+            const containerRect = containerRef.current!.getBoundingClientRect();
+            setTooltipPosition({
+              x: transformed.x - containerRect.left + 16, // 약간 오른쪽
+              y: transformed.y - containerRect.top - 8    // 약간 위쪽
+            });
+            return;
+          }
+        }
+        // fallback: 마우스 위치 기준
         const containerRect = containerRef.current!.getBoundingClientRect();
         setTooltipPosition({
           x: event.pageX - containerRect.left + 10,
@@ -230,8 +329,12 @@ function TreeComp() {
       });
 
     node.append("circle")
+      .attr("fill", d =>
+        selectedNodeIds.includes(d.data.id)
+          ? "#ffe066"
+          : "#fff"
+      )
       .attr("r", 10)
-      .attr("fill", d => d.data.id === selectedNodeId ? "#6366f1" : "#fff")
       .attr("stroke", "#6366f1")
       .attr("stroke-width", 2);
 
@@ -247,12 +350,12 @@ function TreeComp() {
       .attr("font-size", "12px")
       .attr("fill", "#333");
 
-  }, [treeData, selectedNodeId, dimensions, editingNodeId]);
+  }, [treeData, selectedNodeIds, selectedLink, dimensions, editingNodeId]);
 
   // Handle right-click on SVG background
   const handleSvgContextMenu = useCallback((event: React.MouseEvent<SVGSVGElement>) => {
     event.preventDefault(); // Prevent default browser context menu
-    setSelectedNodeId(null); // Deselect any node
+    setSelectedNodeIds([]); // Deselect any node
     setEditingNodeId(null); // Exit inline editing mode
     setContextMenuType('background');
     // Context menu position should be relative to the viewport
@@ -260,6 +363,17 @@ function TreeComp() {
     setShowContextMenu(true);
     setShowTooltip(false); // Hide tooltip when context menu appears
   }, []);
+
+  // SVG 배경 클릭 시 선택 해제
+  const handleSvgBackgroundClick = (event: React.MouseEvent<SVGSVGElement>) => {
+    // 노드/링크가 아닌 SVG 배경 클릭 시
+    if (event.target === svgRef.current) {
+      setSelectedNodeIds([]);
+      setSelectedLink(null);
+      setEditingNodeId(null);
+      setShowContextMenu(false);
+    }
+  };
 
   // Handlers for node operations
   const handleAddNode = useCallback((type: string) => {
@@ -274,21 +388,21 @@ function TreeComp() {
       let newTreeData = JSON.parse(JSON.stringify(prevTreeData)); // Deep copy
 
       if (type === 'child') {
-        if (!selectedNodeId || !newTreeData) return prevTreeData;
-        const selectedNode = findNodeById(newTreeData, selectedNodeId);
+        if (!selectedNodeIds[0] || !newTreeData) return prevTreeData;
+        const selectedNode = findNodeById(newTreeData, selectedNodeIds[0]);
         if (selectedNode) {
           selectedNode.children = selectedNode.children || [];
           selectedNode.children.push(newNode);
         }
       } else if (type === 'sibling') {
-        if (!selectedNodeId || !newTreeData) return prevTreeData;
-        const { node, parent } = findNodeAndParentById(newTreeData, selectedNodeId);
+        if (!selectedNodeIds[0] || !newTreeData) return prevTreeData;
+        const { node, parent } = findNodeAndParentById(newTreeData, selectedNodeIds[0]);
         if (parent) {
           parent.children.push(newNode);
         } else if (node && node.id === newTreeData.id) {
           // If selected is a direct child of the virtual root, treat adding sibling as adding another root
-          if (newTreeData.id === "virtual-root-container" && newTreeData.children.some((child: TreeNode) => child.id === selectedNodeId)) {
-             newTreeData.children.push(newNode);
+          if (newTreeData.id === "virtual-root-container" && newTreeData.children.some((child: TreeNode) => child.id === selectedNodeIds[0])) {
+            newTreeData.children.push(newNode);
           } else {
             // This case should ideally not happen if initialTreeData is always the container.
             // If it's a single root that's not the virtual container, we can't add a sibling.
@@ -296,64 +410,64 @@ function TreeComp() {
           }
         }
       } else if (type === 'parent') {
-          if (!newTreeData) return prevTreeData;
-          // If selected node is a direct child of the virtual root, its parent is the virtual root.
-          // If it's not a direct child, we need to wrap it.
-          const { node, parent } = findNodeAndParentById(newTreeData, selectedNodeId);
+        if (!newTreeData) return prevTreeData;
+        // If selected node is a direct child of the virtual root, its parent is the virtual root.
+        // If it's not a direct child, we need to wrap it.
+        const { node, parent } = findNodeAndParentById(newTreeData, selectedNodeIds[0]);
 
-          if (node && parent && parent.id === "virtual-root-container") {
-              // If the selected node is a direct "root" (child of virtual-root-container)
-              // Create a new node that becomes the parent of the selected node
-              const newParentNode = {
-                  id: generateId(),
-                  name: 'Node',
-                  children: [node]
-              };
-              // Replace the old node with the new parent node in the virtual root's children
-              parent.children = parent.children.map((child: TreeNode) =>
-                  child.id === node.id ? newParentNode : child
-              );
-              newTreeData = parent; // Update newTreeData to the modified parent
-          } else if (node && parent) {
-              // If it's a regular node within a subtree, make it a child of the new parent
-              const newParentNode = {
-                  id: generateId(),
-                  name: 'Node',
-                  children: [node]
-              };
-              // Replace the old node with the new parent node in its original parent's children
-              parent.children = parent.children.map((child: TreeNode) =>
-                  child.id === node.id ? newParentNode : child
-              );
-              newTreeData = newTreeData; // No change to the top-level treeData reference
-          } else if (!selectedNodeId && newTreeData.id !== "virtual-root-container") {
-              // If no node selected, but there's a single root, make new node its parent
-              const newRoot = {
-                  id: generateId(),
-                  name: 'Node',
-                  children: [newTreeData]
-              };
-              newTreeData = newRoot;
-          } else {
-              // This case might occur if selectedNodeId is null and treeData is the virtual container
-              // or if selectedNode is the virtual container itself (which shouldn't be selectable)
-              return prevTreeData;
-          }
+        if (node && parent && parent.id === "virtual-root-container") {
+          // If the selected node is a direct "root" (child of virtual-root-container)
+          // Create a new node that becomes the parent of the selected node
+          const newParentNode = {
+            id: generateId(),
+            name: 'Node',
+            children: [node]
+          };
+          // Replace the old node with the new parent node in the virtual root's children
+          parent.children = parent.children.map((child: TreeNode) =>
+            child.id === node.id ? newParentNode : child
+          );
+          newTreeData = parent; // Update newTreeData to the modified parent
+        } else if (node && parent) {
+          // If it's a regular node within a subtree, make it a child of the new parent
+          const newParentNode = {
+            id: generateId(),
+            name: 'Node',
+            children: [node]
+          };
+          // Replace the old node with the new parent node in its original parent's children
+          parent.children = parent.children.map((child: TreeNode) =>
+            child.id === node.id ? newParentNode : child
+          );
+          newTreeData = newTreeData; // No change to the top-level treeData reference
+        } else if (!selectedNodeIds[0] && newTreeData.id !== "virtual-root-container") {
+          // If no node selected, but there's a single root, make new node its parent
+          const newRoot = {
+            id: generateId(),
+            name: 'Node',
+            children: [newTreeData]
+          };
+          newTreeData = newRoot;
+        } else {
+          // This case might occur if selectedNodeId is null and treeData is the virtual container
+          // or if selectedNode is the virtual container itself (which shouldn't be selectable)
+          return prevTreeData;
+        }
 
       } else if (type === 'root') { // This case is for adding the very first root node OR adding another root
-          if (newTreeData.id === "virtual-root-container") {
-              // Already under a virtual root, just add the new node as its child
-              newTreeData.children.push(newNode);
-          } else {
-              // This should not happen if initialTreeData is always the virtual container.
-              // Fallback: If for some reason treeData is a single root, wrap it and the new node.
-              const implicitSuperRoot = {
-                  id: "virtual-root-container",
-                  name: "",
-                  children: [newTreeData, newNode]
-              };
-              newTreeData = implicitSuperRoot;
-          }
+        if (newTreeData.id === "virtual-root-container") {
+          // Already under a virtual root, just add the new node as its child
+          newTreeData.children.push(newNode);
+        } else {
+          // This should not happen if initialTreeData is always the virtual container.
+          // Fallback: If for some reason treeData is a single root, wrap it and the new node.
+          const implicitSuperRoot = {
+            id: "virtual-root-container",
+            name: "",
+            children: [newTreeData, newNode]
+          };
+          newTreeData = implicitSuperRoot;
+        }
       }
       finalTreeData = newTreeData; // Capture the final tree data for history
       return newTreeData;
@@ -362,33 +476,33 @@ function TreeComp() {
     // Save the new state to history after setTreeData has potentially batched
     // Use a setTimeout to ensure setTreeData has initiated its update
     setTimeout(() => {
-        if (finalTreeData) {
-            saveStateToHistory(finalTreeData);
-            // Set the newly created node as selected and enter editing mode
-            setSelectedNodeId(newNode.id);
-            setEditingNodeId(newNode.id);
-            setEditingNodeName(newNode.name);
-            focusAndSelectInput();
-        }
+      if (finalTreeData) {
+        saveStateToHistory(finalTreeData);
+        // Set the newly created node as selected and enter editing mode
+        setSelectedNodeIds([newNode.id]);
+        setEditingNodeId(newNode.id);
+        setEditingNodeName(newNode.name);
+        focusAndSelectInput();
+      }
     }, 0);
 
 
-  }, [selectedNodeId, treeData, findNodeById, findNodeAndParentById, focusAndSelectInput, saveStateToHistory]);
+  }, [selectedNodeIds, treeData, findNodeById, findNodeAndParentById, focusAndSelectInput, saveStateToHistory]);
 
   const handleEditNode = useCallback(() => {
-    if (!selectedNodeId) {
+    if (!selectedNodeIds[0]) {
       setShowContextMenu(false);
       return;
     }
-    const nodeToEdit = findNodeById(treeData, selectedNodeId);
+    const nodeToEdit = findNodeById(treeData, selectedNodeIds[0]);
     if (nodeToEdit) {
-      setEditingNodeId(selectedNodeId);
+      setEditingNodeId(selectedNodeIds[0]);
       setEditingNodeName(nodeToEdit.name);
       focusAndSelectInput();
     }
     setShowContextMenu(false);
     setShowTooltip(false); // Hide tooltip when editing
-  }, [selectedNodeId, treeData, findNodeById, focusAndSelectInput]);
+  }, [selectedNodeIds, treeData, findNodeById, focusAndSelectInput]);
 
   const handleFinishEditing = useCallback(() => {
     if (!editingNodeId || !editingNodeName.trim()) {
@@ -416,50 +530,50 @@ function TreeComp() {
 
 
   const handleDeleteNode = useCallback(() => {
-    if (!selectedNodeId) {
+    if (!selectedNodeIds[0]) {
       setShowContextMenu(false);
       return;
     }
 
     // Handle deletion of a direct "root" node (child of virtual-root-container)
-    if (treeData && treeData.id === "virtual-root-container" && treeData.children.some(child => child.id === selectedNodeId)) {
-        if (treeData.children.length === 1) { // If it's the last visible root
-            setConfirmMessage("마지막 루트 노드를 삭제하시겠습니까? 모든 트리가 비워집니다.");
-            setConfirmAction(() => () => {
-                setTreeData(null); // Clear the entire tree
-                setSelectedNodeId(null);
-                setShowConfirmModal(false);
-                saveStateToHistory(null);
-            });
-            setShowConfirmModal(true);
-        } else {
-            setTreeData(prevTreeData => {
-                const newTreeData = JSON.parse(JSON.stringify(prevTreeData));
-                const virtualRoot = newTreeData; // Should be the virtual-root-container
-                virtualRoot.children = virtualRoot.children.filter((child: TreeNode) => child.id !== selectedNodeId);
-                setSelectedNodeId(null);
-                saveStateToHistory(newTreeData);
-                return newTreeData;
-            });
-        }
-    } else if (treeData && selectedNodeId === treeData.id && treeData) { // If it's the very first root (not under virtual container)
-        setConfirmMessage("루트 노드를 삭제하시겠습니까? 모든 하위 노드가 삭제됩니다.");
+    if (treeData && treeData.id === "virtual-root-container" && treeData.children.some(child => child.id === selectedNodeIds[0])) {
+      if (treeData.children.length === 1) { // If it's the last visible root
+        setConfirmMessage("마지막 루트 노드를 삭제하시겠습니까? 모든 트리가 비워집니다.");
         setConfirmAction(() => () => {
-            setTreeData(null); // Clear the entire tree
-            setSelectedNodeId(null);
-            setShowConfirmModal(false);
-            saveStateToHistory(null);
+          setTreeData(null); // Clear the entire tree
+          setSelectedNodeIds([]);
+          setShowConfirmModal(false);
+          saveStateToHistory(null);
         });
         setShowConfirmModal(true);
+      } else {
+        setTreeData(prevTreeData => {
+          const newTreeData = JSON.parse(JSON.stringify(prevTreeData));
+          const virtualRoot = newTreeData; // Should be the virtual-root-container
+          virtualRoot.children = virtualRoot.children.filter((child: TreeNode) => child.id !== selectedNodeIds[0]);
+          setSelectedNodeIds([]);
+          saveStateToHistory(newTreeData);
+          return newTreeData;
+        });
+      }
+    } else if (treeData && selectedNodeIds[0] === treeData.id && treeData) { // If it's the very first root (not under virtual container)
+      setConfirmMessage("루트 노드를 삭제하시겠습니까? 모든 하위 노드가 삭제됩니다.");
+      setConfirmAction(() => () => {
+        setTreeData(null); // Clear the entire tree
+        setSelectedNodeIds([]);
+        setShowConfirmModal(false);
+        saveStateToHistory(null);
+      });
+      setShowConfirmModal(true);
     }
     else { // Regular node deletion
       setTreeData(prevTreeData => {
         const newTreeData = JSON.parse(JSON.stringify(prevTreeData)); // Deep copy
-        const { node, parent } = findNodeAndParentById(newTreeData, selectedNodeId);
+        const { node, parent } = findNodeAndParentById(newTreeData, selectedNodeIds[0]);
 
         if (parent && node) {
-          parent.children = parent.children.filter(child => child.id !== selectedNodeId);
-          setSelectedNodeId(null); // Deselect the deleted node
+          parent.children = parent.children.filter(child => child.id !== selectedNodeIds[0]);
+          setSelectedNodeIds([]); // Deselect the deleted node
         }
         saveStateToHistory(newTreeData); // Save this state to history
         return newTreeData;
@@ -467,7 +581,7 @@ function TreeComp() {
     }
     setShowContextMenu(false);
     setShowTooltip(false); // Hide tooltip when deleting
-  }, [selectedNodeId, treeData, findNodeAndParentById, saveStateToHistory]);
+  }, [selectedNodeIds, treeData, findNodeAndParentById, saveStateToHistory]);
 
   // Undo/Redo functions
   const handleUndo = useCallback(() => {
@@ -475,7 +589,7 @@ function TreeComp() {
       const newIndex = historyIndex - 1;
       setTreeData(history[newIndex]);
       setHistoryIndex(newIndex);
-      setSelectedNodeId(null); // Clear selection on undo/redo
+      setSelectedNodeIds([]); // Clear selection on undo/redo
       setEditingNodeId(null); // Exit editing mode on undo/redo
       setShowContextMenu(false);
       setShowTooltip(false);
@@ -487,209 +601,25 @@ function TreeComp() {
       const newIndex = historyIndex + 1;
       setTreeData(history[newIndex]);
       setHistoryIndex(newIndex);
-      setSelectedNodeId(null); // Clear selection on undo/redo
+      setSelectedNodeIds([]); // Clear selection on undo/redo
       setEditingNodeId(null); // Exit editing mode on undo/redo
       setShowContextMenu(false);
       setShowTooltip(false);
     }
   }, [history, historyIndex]);
 
-
-  // Keyboard Shortcuts and Navigation
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (showConfirmModal) return;
-
-      const isOurInlineInputFocused = editingInputRef.current === document.activeElement;
-
-      // 1. Handle active inline editing (Enter/Escape)
-      if (isOurInlineInputFocused) {
-        if (event.key === 'Enter') {
-          handleFinishEditing();
-          event.preventDefault();
-          return; // Consume Enter key
-        } else if (event.key === 'Escape') {
-          setEditingNodeId(null); // Cancel editing
-          setEditingNodeName('');
-          event.preventDefault();
-          return; // Consume Escape key
-        }
-        // For any other key pressed while inline input is focused,
-        // we allow it to propagate (e.g., typing characters), but we don't
-        // want it to trigger tree actions like F2 or arrows.
-        // So, we return here to prevent those actions while actively typing.
-        return;
-      }
-
-      // 2. Prevent interference with other input fields
-      if (document.activeElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA')) {
-        return;
-      }
-
-      // 3. Handle Undo/Redo
-      if (event.ctrlKey && event.key === 'z') {
-          event.preventDefault();
-          handleUndo();
-          return;
-      }
-      if (event.ctrlKey && event.key === 'y') {
-          event.preventDefault();
-          handleRedo();
-          return;
-      }
-
-      // 4. If an edit is pending (editingNodeId is set, but input is NOT focused),
-      //    and the pressed key is one of our action keys, finalize the edit first.
-      const actionKeys = ['F2', 'Delete', 'ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown', 'Insert', 'Enter'];
-      if (editingNodeId && actionKeys.includes(event.key)) {
-          handleFinishEditing(); // Finalize the current edit asynchronously
-          // Defer the action until state update is likely processed.
-          // This re-dispatches the same key event after a short delay,
-          // allowing `editingNodeId` to become `null` in the next render cycle.
-          event.preventDefault(); // Prevent default action of this key press
-          const newEvent = new KeyboardEvent('keydown', {
-              key: event.key,
-              code: event.code,
-              keyCode: event.keyCode,
-              shiftKey: event.shiftKey,
-              altKey: event.altKey,
-              ctrlKey: event.ctrlKey,
-              metaKey: event.metaKey,
-              bubbles: true,
-              cancelable: true
-          });
-          setTimeout(() => {
-              window.dispatchEvent(newEvent); // Re-dispatch the event
-          }, 0);
-          return; // Stop current event processing as it's deferred
-      }
-
-      // 5. Handle tree navigation and actions (only if no editing is pending or after deferred re-dispatch)
-      const d3Nodes = d3TreeNodesRef.current;
-      // If tree is empty (only virtual root exists but no children), allow Shift+Insert for first root.
-      // Or if treeData is null (completely empty after deleting last root)
-      if (
-        !treeData ||
-        (treeData.id === "virtual-root-container" &&
-          (!d3Nodes || d3Nodes.filter(d => d.data.id !== "virtual-root-container").length === 0))
-      ) {
-        if (event.key === 'Insert' && event.shiftKey) {
-          handleAddNode('root');
-          event.preventDefault();
-        }
-        return; // No nodes to navigate if tree is empty
-      }
-
-      if (!d3Nodes) return; // <-- null 체크 추가
-
-      const currentD3Node = d3Nodes.find(d => d && d.data && d.data.id === selectedNodeId);
-
-      switch (event.key) {
-        case 'Insert': // Add Child or Add Parent
-          if (event.shiftKey) { // Shift + Insert for Add Parent
-            // If selected, add parent to selected. If no node selected, add root (if tree exists)
-            if (selectedNodeId) {
-                handleAddNode('parent');
-            } else if (treeData) { // If tree exists but no node selected, assume adding another root
-                handleAddNode('root');
-            }
-          } else { // Insert for Add Child
-            if (selectedNodeId) {
-              handleAddNode('child');
-            }
-          }
-          event.preventDefault();
-          break;
-        case 'Enter': // Add Sibling or Add another Root
-          if (selectedNodeId) {
-            // If selected node is a direct child of the virtual root, treat Enter as adding another root
-            if (treeData.id === "virtual-root-container" && treeData.children.some(child => child.id === selectedNodeId)) {
-              handleAddNode('root'); // Add another root
-            } else { // If non-root node is selected
-              handleAddNode('sibling'); // Add sibling
-            }
-          } else if (treeData && treeData.id === "virtual-root-container") {
-              // If no node selected but virtual root exists, treat Enter as adding another root
-              handleAddNode('root');
-          }
-          event.preventDefault();
-          break;
-        case 'F2': // Edit Node
-          event.preventDefault(); // Prevent browser default for F2
-          if (selectedNodeId) {
-            handleEditNode();
-          }
-          break;
-        case 'Delete': // Delete Node
-          if (selectedNodeId) {
-            handleDeleteNode();
-          }
-          break;
-        case 'ArrowRight': // Move to first child
-          if (currentD3Node && currentD3Node.children && currentD3Node.children.length > 0) {
-            setSelectedNodeId(currentD3Node.children[0].data.id);
-            event.preventDefault(); // Prevent scrolling
-          }
-          break;
-        case 'ArrowLeft': // Move to parent
-          if (currentD3Node && currentD3Node.parent && currentD3Node.parent.data.id !== "virtual-root-container") { // Don't select the virtual root
-            setSelectedNodeId(currentD3Node.parent.data.id);
-            event.preventDefault(); // Prevent scrolling
-          }
-          break;
-        case 'ArrowUp': // Move to previous sibling
-          if (currentD3Node && currentD3Node.parent) {
-            const siblings = currentD3Node.parent.children;
-            if (siblings) { // <-- undefined 체크 추가
-              // Filter out the virtual root from siblings if it somehow appears (shouldn't)
-              const visibleSiblings = siblings.filter((s: D3Node) => s.data.id !== "virtual-root-container");
-              const currentIndex = visibleSiblings.findIndex(s => s.data.id === selectedNodeId);
-              if (currentIndex > 0) {
-                setSelectedNodeId(visibleSiblings[currentIndex - 1].data.id);
-                event.preventDefault(); // Prevent scrolling
-              }
-            }
-          }
-          break;
-        case 'ArrowDown': // Move to next sibling
-          if (currentD3Node && currentD3Node.parent) {
-            const siblings = currentD3Node.parent.children;
-            if (siblings) { // <-- undefined 체크 추가
-              // Filter out the virtual root from siblings if it somehow appears (shouldn't)
-              const visibleSiblings = siblings.filter((s: D3Node) => s.data.id !== "virtual-root-container");
-              const currentIndex = visibleSiblings.findIndex(s => s.data.id === selectedNodeId);
-              if (currentIndex < visibleSiblings.length - 1) {
-                setSelectedNodeId(visibleSiblings[currentIndex + 1].data.id);
-                event.preventDefault(); // Prevent scrolling
-              }
-            }
-          }
-          break;
-        default:
-          break;
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [selectedNodeId, treeData, handleAddNode, handleEditNode, handleDeleteNode, handleFinishEditing, showConfirmModal, editingNodeId, handleUndo, handleRedo]);
-
+  const clipboardRef = useRef<TreeNode[] | null>(null);
+  const pasteLock = useRef(false);
 
   // Close context menu when clicking outside
   useEffect(() => {
     const handleClickOutside = () => {
       if (showContextMenu) {
-        // Check if the click is outside the context menu itself
-        // This is a simplified check, a more robust solution might involve ref on context menu
         setShowContextMenu(false);
       }
     };
     window.addEventListener('click', handleClickOutside);
-    return () => {
-      window.removeEventListener('click', handleClickOutside);
-    };
+    return () => window.removeEventListener('click', handleClickOutside);
   }, [showContextMenu]);
 
   // Find the D3 node data for the currently editing node to position the input
@@ -795,33 +725,87 @@ function TreeComp() {
     setTreeData(newTree);
     setHistory([newTree]);
     setHistoryIndex(0);
-    setSelectedNodeId(null);
+    setSelectedNodeIds([]);
     setShowImportDialog(false);
     setImportedJson(null);
     setImportError(null);
   };
 
+  // 노드 클릭 시
+  const handleNodeClick = (nodeId: string, event?: React.MouseEvent | KeyboardEvent) => {
+    setSelectedNodeIds([nodeId]);
+  };
+
+  // 선택된 노드만 구조 유지 복사
+  function filterSelectedSubtree(node: TreeNode, selectedIds: string[]): TreeNode | null {
+    if (!selectedIds.includes(node.id)) return null;
+    return {
+      ...node,
+      children: node.children
+        .map(child => filterSelectedSubtree(child, selectedIds))
+        .filter(Boolean) as TreeNode[],
+    };
+  }
+
+  useTreeCommands({
+    showConfirmModal,
+    editingInputRef,
+    editingNodeId,
+    handleFinishEditing,
+    setEditingNodeId,
+    setEditingNodeName,
+    handleUndo,
+    handleRedo,
+    selectedNodeIds,
+    treeData,
+    clipboardRef,
+    filterSelectedSubtree,
+    findNodeById,
+    setTreeData,
+    saveStateToHistory,
+    pasteLock,
+    d3TreeNodesRef,
+    handleAddNode,
+    handleEditNode,
+    handleDeleteNode,
+    setSelectedNodeIds,
+  });
+
+  // ESC 키로 선택 해제
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setSelectedNodeIds([]);
+        setSelectedLink(null);
+        setEditingNodeId(null);
+        setShowContextMenu(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   return (
-    <div className="flex flex-col h-screen font-inter bg-gray-100 p-4">
+    <div className="flex flex-col h-screen w-[80vw] font-inter bg-gray-100 p-4">
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-2xl font-bold text-center text-indigo-700">인터랙티브 트리 컴포넌트</h1>
         <div className="flex gap-2">
           {/* 숨겨진 파일 input (항상 1개만, 다이얼로그 밖에 둡니다) */}
-<input
-  type="file"
-  accept="application/json"
-  ref={fileInputRef}
-  onChange={handleImportFileChange}
-  style={{ display: 'none' }}
-/>
+          <input
+            type="file"
+            accept="application/json"
+            ref={fileInputRef}
+            onChange={handleImportFileChange}
+            style={{ display: 'none' }}
+          />
 
-<button
-  className="px-4 py-1 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 transition"
-  onClick={handleImportClick}
-  type="button"
->
-  Import
-</button>
+          <button
+            className="px-4 py-1 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 transition"
+            onClick={handleImportClick}
+            type="button"
+          >
+            Import
+          </button>
           <button
             className="px-4 py-1 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 transition"
             onClick={handleExportClick}
@@ -833,14 +817,14 @@ function TreeComp() {
       </div>
 
       {/* Selected Node Display */}
-      {selectedNodeId && (
+      {selectedNodeIds.length > 0 && (
         <div className="text-center mb-4 text-gray-700">
-          선택된 노드 ID: <span className="font-semibold text-indigo-600">{selectedNodeId}</span>
-          <br/>
-          선택된 노드 이름: <span className="font-semibold text-indigo-600">{findNodeById(treeData, selectedNodeId)?.name || 'N/A'}</span>
+          선택된 노드 ID: <span className="font-semibold text-indigo-600">{selectedNodeIds.join(', ')}</span>
+          <br />
+          선택된 노드 이름: <span className="font-semibold text-indigo-600">{selectedNodeIds.map(id => findNodeById(treeData, id)?.name).join(', ') || 'N/A'}</span>
         </div>
       )}
-      {!selectedNodeId && treeData && (
+      {selectedNodeIds.length === 0 && treeData && (
         <div className="text-center mb-4 text-gray-500">
           노드를 선택해주세요. (마우스 오른쪽 클릭으로 메뉴를 열 수 있습니다)
         </div>
@@ -852,8 +836,13 @@ function TreeComp() {
       ) : null}
 
       {/* Tree Visualization Area */}
-      <div ref={containerRef} className="flex-grow bg-white rounded-lg shadow-lg overflow-auto border border-gray-200 relative"> {/* Added relative for absolute positioning of input */}
-        <svg ref={svgRef} className="block w-full h-full" onContextMenu={handleSvgContextMenu}></svg>
+      <div ref={containerRef} className="flex-grow bg-white rounded-lg shadow-lg overflow-auto border border-gray-200 relative">
+        <svg
+          ref={svgRef}
+          className="block w-full h-full"
+          onContextMenu={handleSvgContextMenu}
+          onClick={handleSvgBackgroundClick} // 추가
+        ></svg>
 
         {/* Inline Edit Input Field */}
         {editingNodeId && currentEditingD3Node && (
@@ -863,18 +852,18 @@ function TreeComp() {
             value={editingNodeName}
             onChange={(e) => setEditingNodeName(e.target.value)}
             onBlur={handleFinishEditing}
-            onKeyPress={(e) => {
+            onKeyDown={(e) => { // <-- 여기만 변경!
               if (e.key === 'Enter') {
                 handleFinishEditing();
               }
             }}
             className="absolute p-1 border border-indigo-400 rounded-md bg-white text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-md"
             style={{
-              left: currentEditingD3Node.y + margin.left - minYOffset + 13, // Adjusted with minYOffset
-              top: currentEditingD3Node.x + margin.top - 10, // Adjust y to vertically align with text
+              left: currentEditingD3Node.y + margin.left - minYOffset + 13,
+              top: currentEditingD3Node.x + margin.top - 10,
               width: 'auto',
               minWidth: '80px',
-              maxWidth: '200px' // Prevent excessively wide input
+              maxWidth: '200px'
             }}
             autoFocus
           />
@@ -900,52 +889,59 @@ function TreeComp() {
         <div
           className="absolute bg-white border border-gray-200 rounded-md shadow-lg py-1 z-50"
           style={{ top: contextMenuPosition.y, left: contextMenuPosition.x }}
-          onClick={() => setShowContextMenu(false)} // Close menu on item click
+          onClick={() => setShowContextMenu(false)}
         >
-          {contextMenuType === 'node' && selectedNodeId && (
-            <>
+          {contextMenuType === 'node' && selectedNodeIds.length > 0 && (<>
+            <button
+              className="block w-full text-left px-4 py-2 text-gray-700 hover:bg-indigo-100"
+              onClick={() => handleAddNode('child')}
+            >
+              자식 노드 추가 (Insert)
+            </button>
+            {treeData && treeData.id === "virtual-root-container" && treeData.children.some(child => child.id === selectedNodeIds[0]) ? (
+              // If selected node is a direct "root" (child of virtual-root-container)
               <button
                 className="block w-full text-left px-4 py-2 text-gray-700 hover:bg-indigo-100"
-                onClick={() => handleAddNode('child')}
+                onClick={() => handleAddNode('root')} // Add another root
               >
-                자식 노드 추가 (Insert)
+                루트 노드 추가 (Shift + Insert)
               </button>
-              {treeData &&treeData.id === "virtual-root-container" && treeData.children.some(child => child.id === selectedNodeId) ? (
-                // If selected node is a direct "root" (child of virtual-root-container)
-                <button
-                  className="block w-full text-left px-4 py-2 text-gray-700 hover:bg-indigo-100"
-                  onClick={() => handleAddNode('root')} // Add another root
-                >
-                  루트 노드 추가 (Enter)
-                </button>
-              ) : (
-                // If selected node is a regular node (not a direct "root")
-                <button
-                  className="block w-full text-left px-4 py-2 text-gray-700 hover:bg-indigo-100"
-                  onClick={() => handleAddNode('sibling')}
-                >
-                  형제 노드 추가 (Enter)
-                </button>
-              )}
+            ) : (
+              // If selected node is a regular node (not a direct "root")
               <button
                 className="block w-full text-left px-4 py-2 text-gray-700 hover:bg-indigo-100"
-                onClick={() => handleAddNode('parent')}
+                onClick={() => handleAddNode('sibling')}
               >
-                부모 노드 추가 (Shift + Insert)
+                형제 노드 추가 (Ctrl+Enter)
               </button>
-              <button
-                className="block w-full text-left px-4 py-2 text-gray-700 hover:bg-indigo-100"
-                onClick={handleEditNode}
-              >
-                노드 수정 (F2)
-              </button>
-              <button
-                className="block w-full text-left px-4 py-2 text-gray-700 hover:bg-indigo-100"
-                onClick={handleDeleteNode}
-              >
-                노드 삭제 (Delete)
-              </button>
-            </>
+            )}
+            <button
+              className="block w-full text-left px-4 py-2 text-gray-700 hover:bg-indigo-100"
+              onClick={() => handleAddNode('parent')}
+            >
+              부모 노드 추가 (Shift + Insert)
+            </button>
+            <button
+              className="block w-full text-left px-4 py-2 text-gray-700 hover:bg-indigo-100"
+              onClick={handleEditNode}
+            >
+              노드 수정 (F2)
+            </button>
+            <button
+              className="block w-full text-left px-4 py-2 text-gray-700 hover:bg-indigo-100"
+              onClick={handleDeleteNode}
+            >
+              노드 삭제 (Delete)
+            </button>
+          </>
+          )}
+          {contextMenuType === 'link' && selectedLink && (
+            <div className="px-4 py-2 text-gray-700">
+              <div>선택된 선</div>
+              <div className="text-xs text-gray-500">
+                {selectedLink.sourceId} → {selectedLink.targetId}
+              </div>
+            </div>
           )}
           {contextMenuType === 'background' && ( // Always show "루트 노드 추가" on background click
             <button
