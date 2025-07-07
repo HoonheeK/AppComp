@@ -1,8 +1,12 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import type { MouseEvent } from 'react';
+import useScheduleChartCommands from './useScheduleChartCommands';
+import useScheduleChartOptions from './useScheduleChartOptions';
+import { addDays,getDaysBetween } from './utils';
+// import NonWorkingDayPicker from './NonWorkingDayPicker';
 
 // 타입 정의
-type Task = {
+export type Task = {
   id: string;
   name: string;
   start: string;
@@ -11,7 +15,7 @@ type Task = {
   dependencies: string[];
 };
 
-type NonWorkingDays = Record<string, boolean>;
+export type NonWorkingDays = Record<string, boolean>;
 
 interface NonWorkingDayPickerProps {
   initialNonWorkingDays: NonWorkingDays;
@@ -19,27 +23,6 @@ interface NonWorkingDayPickerProps {
   onClose: () => void;
   year: number;
 }
-
-// 날짜 유틸리티 함수
-const addDays = (date: Date | string, days: number): Date => {
-  const result = new Date(date);
-  result.setDate(result.getDate() + days);
-  return result;
-};
-
-const formatDate = (date: Date | string | null): string => {
-  if (!date) return '';
-  const d = new Date(date);
-  return d.toISOString().split('T')[0];
-};
-
-const getDaysBetween = (startDate: Date | string, endDate: Date | string): number => {
-  const start = new Date(startDate);
-  const end = new Date(endDate);
-  const diffTime = Math.abs(end.getTime() - start.getTime());
-  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-  return diffDays;
-};
 
 // NonWorkingDayPicker 컴포넌트
 const NonWorkingDayPicker: React.FC<NonWorkingDayPickerProps> = ({ initialNonWorkingDays, onSave, onClose, year }) => {
@@ -140,6 +123,10 @@ const HISTORY_LIMIT = 20;
 
 // 간트 차트 컴포넌트
 const ScheduleChart: React.FC = () => {
+  // 커맨드 및 옵션 훅 사용
+  const commands = useScheduleChartCommands();
+  const options = useScheduleChartOptions();
+
   const [tasks, setTasks] = useState<Task[]>(
     [
       { id: '1', name: '프로젝트 계획 ABCDEFGGEEFFSFASFF', start: '2025-07-01', end: '2025-07-05', progress: 100, dependencies: [] },
@@ -155,9 +142,46 @@ const ScheduleChart: React.FC = () => {
   const [historyIndex, setHistoryIndex] = useState<number>(0);
 
   const chartYear = new Date().getFullYear();
-//   const todayDate = new Date().getDay();
+  //   const todayDate = new Date().getDay();
   // const startDate = new Date(`${chartYear-1}-06-28`);
   // const endDate = new Date(`${chartYear+1}-08-15`);
+  // 표시 영역 계산
+  const { chartStartDate, chartEndDate } = getChartRange(tasks);
+  const totalDays = getDaysBetween(chartStartDate, chartEndDate) + 1;
+
+  const getDates = useCallback((): string[] => {
+    const dates: string[] = [];
+    for (let i = 0; i < totalDays; i++) {
+      dates.push(formatDate(addDays(chartStartDate, i)));
+    }
+    return dates;
+  }, [chartStartDate, totalDays]);
+
+  const dates = getDates();
+
+
+  // 주 단위 날짜 배열 생성
+  const getWeekDates = useCallback((): string[] => {
+    const weeks: string[] = [];
+    let current = new Date(chartStartDate);
+    current.setDate(current.getDate() - current.getDay()); // 주의 시작(일요일)로 맞춤
+    while (current <= chartEndDate) {
+      weeks.push(formatDate(current));
+      current.setDate(current.getDate() + 7);
+    }
+    return weeks;
+  }, [chartStartDate, chartEndDate]);
+
+  const getAllWeekDates = useCallback((): string[] => {
+    const weeks: string[] = [];
+    let current = new Date(chartStartDate);
+    current.setDate(current.getDate() - current.getDay()); // 주의 시작(일요일)로 맞춤
+    while (current <= chartEndDate) {
+      weeks.push(formatDate(current));
+      current.setDate(current.getDate() + 7);
+    }
+    return weeks;
+  }, [chartStartDate, chartEndDate]);
 
   const dayWidth = 15;
   const taskHeight = 40;
@@ -169,6 +193,7 @@ const ScheduleChart: React.FC = () => {
   const isScrollingRight = useRef(false);
 
   const taskRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const weekCellWidth = 28; // 일(day)보다 좁게, 필요시 조정
 
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
@@ -185,28 +210,40 @@ const ScheduleChart: React.FC = () => {
   const [newTaskEnd, setNewTaskEnd] = useState(formatDate(new Date()));
   const [newTaskProgress, setNewTaskProgress] = useState(0);
 
-  // 1. 열 너비 상태 추가
-const [colWidths, setColWidths] = useState<number[]>([0, 0, 0]);
-const headerRefs = [useRef<HTMLDivElement>(null), useRef<HTMLDivElement>(null), useRef<HTMLDivElement>(null)];
-const cellRefs = tasks.map(() => [useRef<HTMLDivElement>(null), useRef<HTMLDivElement>(null), useRef<HTMLDivElement>(null)]);
 
-// 2. 열 너비 계산 useEffect
-useEffect(() => {
-  // 헤더와 각 행의 셀 중 가장 넓은 값으로 colWidths 설정
-  const widths = [0, 0, 0];
-  // 헤더
-  headerRefs.forEach((ref, i) => {
-    if (ref.current) widths[i] = ref.current.offsetWidth;
-  });
-  // 데이터
-  cellRefs.forEach(refArr => {
-    refArr.forEach((ref, i) => {
-      if (ref.current) widths[i] = Math.max(widths[i], ref.current.offsetWidth);
+  const [timelineScale, setTimelineScale] = useState<'day' | 'week'>('day');
+  const weekDates = timelineScale === 'week' ? getAllWeekDates() : [];
+
+
+  // 1. 열 너비 상태 추가
+  const [colWidths, setColWidths] = useState<number[]>([0, 0, 0]);
+  const headerRefs = [useRef<HTMLDivElement>(null), useRef<HTMLDivElement>(null), useRef<HTMLDivElement>(null)];
+  const cellRefs = useRef<Array<Array<HTMLDivElement | null>>>([]);
+
+  useEffect(() => {
+    // tasks 개수에 맞게 cellRefs.current 크기 조정
+    if (cellRefs.current.length !== tasks.length) {
+      cellRefs.current = tasks.map(() => [null, null, null]);
+    }
+  }, [tasks]);
+
+  // 2. 열 너비 계산 useEffect
+  useEffect(() => {
+    // 헤더와 각 행의 셀 중 가장 넓은 값으로 colWidths 설정
+    const widths = [0, 0, 0];
+    // 헤더
+    headerRefs.forEach((ref, i) => {
+      if (ref.current) widths[i] = ref.current.offsetWidth;
     });
-  });
-  setColWidths(widths);
-  // eslint-disable-next-line
-}, [tasks, newTaskName, newTaskStart, newTaskEnd, newTaskProgress]);
+    // 데이터
+    cellRefs.current.forEach(refArr => {
+      refArr.forEach((ref, i) => {
+        if (ref) widths[i] = Math.max(widths[i], ref.offsetWidth);
+      });
+    });
+    setColWidths(widths);
+    // eslint-disable-next-line
+  }, [tasks, newTaskName, newTaskStart, newTaskEnd, newTaskProgress]);
 
   // 표시 영역 계산 함수 추가
   function getChartRange(tasks: Task[]): { chartStartDate: Date; chartEndDate: Date } {
@@ -232,32 +269,50 @@ useEffect(() => {
     }
   }
 
-  // 표시 영역 계산
-  const { chartStartDate, chartEndDate } = getChartRange(tasks);
-  const totalDays = getDaysBetween(chartStartDate, chartEndDate) + 1;
 
-  const getDates = useCallback((): string[] => {
-    const dates: string[] = [];
-    for (let i = 0; i < totalDays; i++) {
-      dates.push(formatDate(addDays(chartStartDate, i)));
-    }
-    return dates;
-  }, [chartStartDate, totalDays]);
-
-  const dates = getDates();
-
+  // getTaskPositionAndWidth 함수
   const getTaskPositionAndWidth = useCallback((task: Task) => {
-    const taskStart = new Date(task.start);
-    const taskEnd = new Date(task.end);
+    if (timelineScale === 'week') {
+      const weekDates = getAllWeekDates();
+      const weekRanges = weekDates.map(weekStartStr => {
+        const start = new Date(weekStartStr);
+        const end = new Date(start);
+        end.setDate(start.getDate() + 6);
+        return { start, end };
+      });
 
-    const startOffsetDays = getDaysBetween(chartStartDate, taskStart);
-    const durationDays = getDaysBetween(taskStart, taskEnd) + 1;
+      const taskStart = new Date(task.start);
+      const taskEnd = new Date(task.end);
 
-    const x = startOffsetDays * dayWidth;
-    const width = durationDays * dayWidth;
+      let firstWeekIdx = -1;
+      let lastWeekIdx = -1;
+      weekRanges.forEach(({ start, end }, idx) => {
+        if (end >= taskStart && start <= taskEnd) {
+          if (firstWeekIdx === -1) firstWeekIdx = idx;
+          lastWeekIdx = idx;
+        }
+      });
 
-    return { x, width };
-  }, [chartStartDate, dayWidth]);
+      const span = firstWeekIdx !== -1 && lastWeekIdx !== -1 ? lastWeekIdx - firstWeekIdx + 1 : 0;
+
+      return {
+        x: firstWeekIdx >= 0 ? firstWeekIdx * weekCellWidth : 0,
+        width: span > 0 ? span * weekCellWidth : weekCellWidth,
+      };
+    } else {
+      // 일 단위(기존)
+      const taskStart = new Date(task.start);
+      const taskEnd = new Date(task.end);
+
+      const startOffsetDays = getDaysBetween(chartStartDate, taskStart);
+      const durationDays = getDaysBetween(taskStart, taskEnd) + 1;
+
+      const x = startOffsetDays * dayWidth;
+      const width = durationDays * dayWidth;
+
+      return { x, width };
+    }
+  }, [timelineScale, getAllWeekDates, weekCellWidth, chartStartDate, dayWidth]);
 
   const handleMouseDown = useCallback(
     (e: MouseEvent<HTMLDivElement>, taskId: string, mode: 'move' | 'resize-left' | 'resize-right') => {
@@ -506,44 +561,44 @@ useEffect(() => {
   }, [contextMenu]);
 
   // Timeline 헤더 정보 생성 함수
-const getTimelineHeaderRows = useCallback(() => {
-  const years: { value: string; start: number; span: number }[] = [];
-  const months: { value: string; start: number; span: number }[] = [];
-  let prevYear = '';
-  let prevMonth = '';
-  let yearStart = 0;
-  let monthStart = 0;
+  const getTimelineHeaderRows = useCallback(() => {
+    const years: { value: string; start: number; span: number }[] = [];
+    const months: { value: string; start: number; span: number }[] = [];
+    let prevYear = '';
+    let prevMonth = '';
+    let yearStart = 0;
+    let monthStart = 0;
 
-  dates.forEach((date, idx) => {
-    const d = new Date(date);
-    const year = d.getFullYear().toString();
-    const month = d.toLocaleString('ko-KR', { month: 'short' });
+    dates.forEach((date, idx) => {
+      const d = new Date(date);
+      const year = d.getFullYear().toString();
+      const month = d.toLocaleString('ko-KR', { month: 'short' });
 
-    // 연도 처리
-    if (year !== prevYear) {
-      if (prevYear !== '') {
-        years.push({ value: prevYear, start: yearStart, span: idx - yearStart });
+      // 연도 처리
+      if (year !== prevYear) {
+        if (prevYear !== '') {
+          years.push({ value: prevYear, start: yearStart, span: idx - yearStart });
+        }
+        prevYear = year;
+        yearStart = idx;
       }
-      prevYear = year;
-      yearStart = idx;
-    }
-    // 월 처리
-    if (month !== prevMonth || year !== prevYear) {
-      if (prevMonth !== '') {
-        months.push({ value: prevMonth, start: monthStart, span: idx - monthStart });
+      // 월 처리
+      if (month !== prevMonth || year !== prevYear) {
+        if (prevMonth !== '') {
+          months.push({ value: prevMonth, start: monthStart, span: idx - monthStart });
+        }
+        prevMonth = month;
+        monthStart = idx;
       }
-      prevMonth = month;
-      monthStart = idx;
-    }
-    // 마지막 처리
-    if (idx === dates.length - 1) {
-      years.push({ value: year, start: yearStart, span: idx - yearStart + 1 });
-      months.push({ value: month, start: monthStart, span: idx - monthStart + 1 });
-    }
-  });
+      // 마지막 처리
+      if (idx === dates.length - 1) {
+        years.push({ value: year, start: yearStart, span: idx - yearStart + 1 });
+        months.push({ value: month, start: monthStart, span: idx - monthStart + 1 });
+      }
+    });
 
-  return { years, months };
-}, [dates]);
+    return { years, months };
+  }, [dates]);
 
   const timelineHeaderRef = useRef<HTMLDivElement>(null);
 
@@ -553,11 +608,44 @@ const getTimelineHeaderRows = useCallback(() => {
     }
   }, []);
 
+  // 타임라인 헤더 스크롤 시 차트도 같이 스크롤
   const handleHeaderScroll = useCallback(() => {
     if (timelineHeaderRef.current && rightScrollRef.current) {
       rightScrollRef.current.scrollLeft = timelineHeaderRef.current.scrollLeft;
     }
   }, []);
+
+
+
+  // Timeline 헤더 더블클릭 핸들러
+  const handleTimelineHeaderDoubleClick = () => {
+    setTimelineScale(prev => (prev === 'day' ? 'week' : 'day'));
+  };
+
+  // 초기 로드 시 중앙 날짜로 스크롤
+  useEffect(() => {
+    if (timelineHeaderRef.current && rightScrollRef.current) {
+      // 중앙 날짜/주 인덱스 계산
+      let centerIdx = 0;
+      if (timelineScale === 'day') {
+        centerIdx = Math.floor(dates.length / 2);
+        timelineHeaderRef.current.scrollLeft = centerIdx * dayWidth - timelineHeaderRef.current.clientWidth / 2;
+        rightScrollRef.current.scrollLeft = centerIdx * dayWidth - rightScrollRef.current.clientWidth / 2;
+      } else {
+        const weekDates = getAllWeekDates();
+        centerIdx = Math.floor(weekDates.length / 2);
+        timelineHeaderRef.current.scrollLeft = centerIdx * weekCellWidth - timelineHeaderRef.current.clientWidth / 2;
+        rightScrollRef.current.scrollLeft = centerIdx * weekCellWidth - rightScrollRef.current.clientWidth / 2;
+      }
+    }
+    // eslint-disable-next-line
+  }, [timelineScale]);
+
+  // 헤더의 세로 그리드 라인, 헤더 row, 차트 영역 등에서 아래처럼 width 계산
+  const timelineWidth =
+    timelineScale === 'day'
+      ? totalDays * dayWidth
+      : getAllWeekDates().length * weekCellWidth;
 
   return (
     <div className="p-4 bg-gray-100 min-h-screen font-inter flex flex-col items-center">
@@ -612,26 +700,27 @@ const getTimelineHeaderRows = useCallback(() => {
                 autoFocus
               />
             </div>
-            <div className="mb-3 flex gap-2">
-              <div className="flex-1">
-                <label className="block text-gray-700 mb-1">시작일</label>
-                <input
-                  type="date"
-                  className="w-full border rounded px-2 py-1"
-                  value={newTaskStart}
-                  onChange={e => setNewTaskStart(e.target.value)}
-                />
-              </div>
-              <div className="flex-1">
-                <label className="block text-gray-700 mb-1">종료일</label>
-                <input
-                  type="date"
-                  className="w-full border rounded px-2 py-1"
-                  value={newTaskEnd}
-                  min={newTaskStart}
-                  onChange={e => setNewTaskEnd(e.target.value)}
-                />
-              </div>
+            <div className="mb-3">
+              <label className="block text-gray-700 mb-1">기간 (시작일 ~ 종료일)</label>
+              <input
+                type="date"
+                className="w-full border rounded px-2 py-1 mb-1"
+                value={newTaskStart}
+                onChange={e => {
+                  setNewTaskStart(e.target.value);
+                  // 시작일이 종료일보다 뒤면 종료일도 같이 맞춰줌
+                  if (e.target.value > newTaskEnd) setNewTaskEnd(e.target.value);
+                }}
+                max={newTaskEnd}
+              />
+              <span className="mx-2 text-gray-500">~</span>
+              <input
+                type="date"
+                className="w-full border rounded px-2 py-1 mt-1"
+                value={newTaskEnd}
+                min={newTaskStart}
+                onChange={e => setNewTaskEnd(e.target.value)}
+              />
             </div>
             <div className="mb-3">
               <label className="block text-gray-700 mb-1">진행률 (%)</label>
@@ -655,7 +744,12 @@ const getTimelineHeaderRows = useCallback(() => {
               <button
                 className="px-4 py-2 bg-green-600 text-gray-500 rounded-md hover:bg-green-700 transition"
                 onClick={handleAddTask}
-                disabled={!newTaskName.trim() || !newTaskStart || !newTaskEnd}
+                disabled={
+                  !newTaskName.trim() ||
+                  !newTaskStart ||
+                  !newTaskEnd ||
+                  newTaskEnd < newTaskStart
+                }
                 type="button"
               >
                 추가
@@ -687,12 +781,12 @@ const getTimelineHeaderRows = useCallback(() => {
             <div className="grid grid-cols-3 font-semibold text-gray-700 h-10 items-center flex-shrink-0" style={{ height: 22 }}>
               <div
                 ref={headerRefs[0]}
-                className="border-r border-gray-200 pl-2"
+                className="pl-2" //border-r border-gray-200 "
                 style={{ width: colWidths[0] || undefined, minWidth: colWidths[0] || undefined, maxWidth: colWidths[0] || undefined }}
               >작업 이름</div>
               <div
                 ref={headerRefs[1]}
-                className="text-center border-r border-gray-200"
+                className="text-center" // border-r border-gray-200"
                 style={{ width: colWidths[1] || undefined, minWidth: colWidths[1] || undefined, maxWidth: colWidths[1] || undefined }}
               >시작일</div>
               <div
@@ -723,24 +817,22 @@ const getTimelineHeaderRows = useCallback(() => {
                 onContextMenu={e => handleTaskContextMenu(e, task.id)}
               >
                 <div
-                  ref={cellRefs[rowIdx][0]}
-                  className="border-r border-gray-200 pl-2"
+                  ref={el => {
+                    if (cellRefs.current[rowIdx]) cellRefs.current[rowIdx][0] = el;
+                  }}
                   style={{
-                    alignContent : 'flex-start',
                     whiteSpace: 'nowrap',
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
-                    width: colWidths[0] || undefined,
-                    minWidth: colWidths[0] || undefined,
-                    maxWidth: colWidths[0] || undefined,
                   }}
-                  title={task.name}
                 >
                   {task.name}
                 </div>
                 <div
-                  ref={cellRefs[rowIdx][1]}
-                  className="text-center border-r border-gray-200"
+                  ref={el => {
+                    if (cellRefs.current[rowIdx]) cellRefs.current[rowIdx][1] = el;
+                  }}
+                  className="text-center" // border-r border-gray-200"
                   style={{
                     width: colWidths[1] || undefined,
                     minWidth: colWidths[1] || undefined,
@@ -750,7 +842,9 @@ const getTimelineHeaderRows = useCallback(() => {
                   {task.start}
                 </div>
                 <div
-                  ref={cellRefs[rowIdx][2]}
+                  ref={el => {
+                    if (cellRefs.current[rowIdx]) cellRefs.current[rowIdx][2] = el;
+                  }}
                   className="text-center"
                   style={{
                     width: colWidths[2] || undefined,
@@ -758,7 +852,22 @@ const getTimelineHeaderRows = useCallback(() => {
                     maxWidth: colWidths[2] || undefined,
                   }}
                 >
-                  {getDaysBetween(task.start, task.end) + 1}일
+                  {/* 작업 목록의 기간 셀 */}
+                  {timelineScale === 'week'
+                    ? (() => {
+                      // 주 단위 기간 계산
+                      const weekDates = getWeekDates();
+                      const getWeekStart = (date: Date | string) => {
+                        const d = new Date(date);
+                        d.setDate(d.getDate() - d.getDay());
+                        d.setHours(0, 0, 0, 0);
+                        return formatDate(d);
+                      };
+                      const startIdx = weekDates.findIndex(w => w === getWeekStart(task.start));
+                      const endIdx = weekDates.findIndex(w => w === getWeekStart(task.end));
+                      return `${Math.max(1, endIdx - startIdx + 1)}주`;
+                    })()
+                    : `${getDaysBetween(task.start, task.end) + 1}일`}
                 </div>
               </div>
             ))}
@@ -773,56 +882,197 @@ const getTimelineHeaderRows = useCallback(() => {
             className="sticky top-0 z-10 bg-gray-50 flex-shrink-0 overflow-x-hidden border-b border-gray-200"
             style={{ overflowX: 'auto' }}
             onScroll={handleHeaderScroll}
+            onDoubleClick={handleTimelineHeaderDoubleClick}
           >
-            <div className="flex" style={{ borderBottom: '1px solid #e5e7eb' }}>
-              {/* Year Row */}
-              {getTimelineHeaderRows().years.map((year, i) => (
+            {/* === 세로 그리드 라인 추가 === */}
+            <div className="relative" style={{
+              position: 'absolute',
+              top: 52,
+              left: 0,
+              height: 22, // 헤더 row 높이
+              width: timelineWidth,
+              pointerEvents: 'none',
+              zIndex: 1,
+            }}>
+              {(timelineScale === 'day' ? dates : getAllWeekDates()).map((date, index) => (
                 <div
-                  key={`year-${year.value}-${i}`}
-                  className="text-center text-xs font-semibold text-gray-700 flex items-center justify-center border-r border-gray-200"
+                  key={`header-grid-line-${date}`}
+                  className="absolute border-l border-gray-200"
                   style={{
-                    width: year.span * dayWidth,
-                    minWidth: year.span * dayWidth,
-                    borderRight: i === getTimelineHeaderRows().years.length - 1 ? 'none' : undefined,
-                    height: 28,
+                    left: index * (timelineScale === 'week' ? weekCellWidth : dayWidth),
+                    height: '100%',
                   }}
-                >
-                  {year.value}
-                </div>
+                />
               ))}
             </div>
-            <div className="flex" style={{ borderBottom: '1px solid #e5e7eb' }}>
-              {/* Month Row */}
-              {getTimelineHeaderRows().months.map((month, i) => (
-                <div
-                  key={`month-${month.value}-${i}`}
-                  className="text-center text-xs text-gray-600 flex items-center justify-center border-r border-gray-200"
-                  style={{
-                    width: month.span * dayWidth,
-                    minWidth: month.span * dayWidth,
-                    borderRight: i === getTimelineHeaderRows().months.length - 1 ? 'none' : undefined,
-                    height: 24,
-                  }}
-                >
-                  {month.value}
-                </div>
-              ))}
-            </div>
+            {/* Year Row */}
             <div className="flex">
-              {/* Day Row */}
-              {dates.map((date, index) => {
-                const isWeekend = new Date(date).getDay() === 0 || new Date(date).getDay() === 6;
-                const isNonWorking = nonWorkingDays[date];
-                return (
-                  <div
-                    key={date}
-                    className={`flex-shrink-0 text-center text-xs py-1 ${isWeekend || isNonWorking ? 'bg-gray-200 text-gray-600' : 'text-gray-600'}`}
-                    style={{ width: dayWidth, height: 22 }}
-                  >
-                    {new Date(date).getDate()}
-                  </div>
-                );
-              })}
+              {(() => {
+                if (timelineScale === 'day') {
+                  // 기존 day 모드
+                  return getTimelineHeaderRows().years.map((year, i) => (
+                    <div
+                      key={`year-${year.value}-${i}`}
+                      className="text-center text-xs font-semibold text-gray-700 flex items-center justify-center border-r border-t border-gray-200"
+                      style={{
+                        width: year.span * dayWidth,
+                        minWidth: year.span * dayWidth,
+                        height: 28,
+                      }}
+                    >
+                      {year.value}
+                    </div>
+                  ));
+                } else {
+                  // week 모드: 모든 주(week)에 대해 연 헤더를 연속적으로 생성
+                  const weekDates = getAllWeekDates();
+                  const weekYears = weekDates.map(w => new Date(w).getFullYear().toString());
+
+                  // 연별로 몇 주가 있는지 카운트 (연속된 모든 주 포함)
+                  const yearSpans: { value: string; span: number }[] = [];
+                  let prevYear = '';
+                  let span = 0;
+                  weekYears.forEach((y, idx) => {
+                    if (y !== prevYear) {
+                      if (span > 0) yearSpans.push({ value: prevYear, span });
+                      prevYear = y;
+                      span = 1;
+                    } else {
+                      span++;
+                    }
+                    if (idx === weekYears.length - 1) {
+                      yearSpans.push({ value: y, span });
+                    }
+                  });
+
+                  const totalWeeks = weekDates.length;
+                  let weekSum = 0;
+
+                  return yearSpans.map((year, i) => {
+                    weekSum += year.span;
+                    const isLast = i === yearSpans.length - 1;
+                    const width = isLast
+                      ? (totalWeeks - (weekSum - year.span)) * weekCellWidth
+                      : year.span * weekCellWidth;
+                    return (
+                      <div
+                        key={`year-${year.value}-${i}`}
+                        className="text-center text-xs font-semibold text-gray-700 flex items-center justify-center border-r border-t border-gray-200"
+                        style={{
+                          width,
+                          minWidth: width,
+                          height: 28,
+                        }}
+                      >
+                        {year.value}
+                      </div>
+                    );
+                  });
+                }
+              })()}
+            </div>
+            <div className="flex" /* style={{ borderBottom: '1px solid #e5e7eb' }} */ >
+              {/* Month Row */}
+              {(() => {
+                if (timelineScale === 'day') {
+                  // 기존 day 모드
+                  return getTimelineHeaderRows().months.map((month, i) => (
+                    <div
+                      key={`month-${month.value}-${i}`}
+                      className="text-center text-xs text-gray-600 flex items-center justify-center border-r border-t border-gray-200"
+                      style={{
+                        width: month.span * dayWidth,
+                        minWidth: month.span * dayWidth,
+                        // borderRight: i === getTimelineHeaderRows().months.length - 1 ? 'none' : undefined,
+                        height: 24,
+                      }}
+                    >
+                      {month.value}
+                    </div>
+                  ));
+                } else {
+                  // week 모드: 모든 주(week)에 대해 월 헤더를 연속적으로 생성
+                  const weekDates = getAllWeekDates();
+                  const weekMonths = weekDates.map(w => {
+                    const d = new Date(w);
+                    return `${d.getFullYear()}-${d.getMonth() + 1}`;
+                  });
+
+                  // 월별로 몇 주가 있는지 카운트 (연속된 모든 주 포함)
+                  const monthSpans: { value: string; span: number }[] = [];
+                  let prevMonth = '';
+                  let span = 0;
+                  weekMonths.forEach((m, idx) => {
+                    if (m !== prevMonth) {
+                      if (span > 0) monthSpans.push({ value: prevMonth, span });
+                      prevMonth = m;
+                      span = 1;
+                    } else {
+                      span++;
+                    }
+                    if (idx === weekMonths.length - 1) {
+                      monthSpans.push({ value: m, span });
+                    }
+                  });
+
+                  const totalWeeks = weekDates.length;
+                  let weekSum = 0;
+
+                  return monthSpans.map((month, i) => {
+                    weekSum += month.span;
+                    const isLast = i === monthSpans.length - 1;
+                    const width = isLast
+                      ? (totalWeeks - (weekSum - month.span)) * weekCellWidth
+                      : month.span * weekCellWidth;
+                    const [year, m] = month.value.split('-');
+                    return (
+                      <div
+                        key={`month-${month.value}-${i}`}
+                        className="text-center text-xs text-gray-600 flex items-center justify-center border-r border-t border-gray-200"
+                        style={{
+                          width,
+                          minWidth: width,
+                          height: 24,
+                        }}
+                      >
+                        {`${m}월`}
+                      </div>
+                    );
+                  });
+                }
+              })()}
+            </div>
+            <div className="flex" style={{ borderBottom: '1px solid #e5e7eb' }}>
+              {/* Week Row */}
+              {timelineScale === 'day'
+                ? dates.map((date, index) => {
+                  const isWeekend = new Date(date).getDay() === 0 || new Date(date).getDay() === 6;
+                  const isNonWorking = nonWorkingDays[date];
+                  return (
+                    <div
+                      key={date}
+                      className={`flex-shrink-0 text-center border-r border-t border-gray-200 text-xs py-1 ${isWeekend || isNonWorking ? 'bg-gray-200 text-gray-600' : 'text-gray-600'}`}
+                      style={{ width: dayWidth, height: 22 }}
+                    >
+                      {new Date(date).getDate()}
+                    </div>
+                  );
+                })
+                : getAllWeekDates().map((weekStart, idx) => {
+                  const week = new Date(weekStart);
+                  const weekNum = Math.ceil(
+                    ((week.getTime() - new Date(week.getFullYear(), 0, 1).getTime()) / (1000 * 60 * 60 * 24) + week.getDay() + 1) / 7
+                  );
+                  return (
+                    <div
+                      key={weekStart}
+                      className="flex-shrink-0 text-center text-xs py-1 bg-gray-100 text-gray-700 border-r border-t border-gray-200"
+                      style={{ width: weekCellWidth, height: 22 }}
+                    >
+                      {weekNum}주
+                    </div>
+                  );
+                })}
             </div>
           </div>
 
@@ -837,19 +1087,34 @@ const getTimelineHeaderRows = useCallback(() => {
             <div
               className="relative"
               style={{
-                width: totalDays * dayWidth,
+                width: timelineWidth,
                 height: tasks.length * (taskHeight + rowGap),
               }}
             >
-              {/* 세로 그리드 라인 (날짜별) */}
-              {dates.map((date, index) => {
-                const isWeekend = new Date(date).getDay() === 0 || new Date(date).getDay() === 6;
-                const isNonWorking = nonWorkingDays[date];
+              {/* 세로 그리드 라인 */}
+              {(timelineScale === 'day' ? dates : weekDates).map((date, index) => {
+                // Non-working day(휴일 또는 지정된 휴무일) 여부 판별
+                const isWeekend =
+                  timelineScale === 'day'
+                    ? (() => {
+                        const d = new Date(date);
+                        return d.getDay() === 0 || d.getDay() === 6;
+                      })()
+                    : false;
+                const isNonWorking =
+                  timelineScale === 'day'
+                    ? nonWorkingDays[date]
+                    : false;
+
                 return (
                   <div
                     key={`grid-line-${date}`}
-                    className={`absolute top-0 h-full border-l border-gray-200 ${isWeekend || isNonWorking ? 'bg-gray-100' : ''}`}
-                    style={{ left: index * dayWidth, width: dayWidth }}
+                    className={`absolute top-0 h-full border-l border-gray-200 ${isWeekend || isNonWorking ? 'bg-gray-200' : ''}`}
+                    style={{
+                      left: index * (timelineScale === 'week' ? weekCellWidth : dayWidth),
+                      width: timelineScale === 'week' ? weekCellWidth : dayWidth,
+                      zIndex: 0,
+                    }}
                   ></div>
                 );
               })}
@@ -919,7 +1184,7 @@ const getTimelineHeaderRows = useCallback(() => {
                       }}
                       title={barText}
                     >
-                      {!isOverflow ? barText:''}
+                      {!isOverflow ? barText : ''}
                     </span>
                     {/* 막대 밖 오른쪽에 전체 이름 표시 (넘칠 때만) */}
                     {isOverflow && (
@@ -967,7 +1232,7 @@ const getTimelineHeaderRows = useCallback(() => {
               {/* 의존성 선 */}
               <svg
                 className="absolute top-0 left-0 pointer-events-none"
-                width={totalDays * dayWidth}
+                width={timelineWidth}
                 height={tasks.length * (taskHeight + rowGap)}
               >
                 <defs>
@@ -988,8 +1253,16 @@ const getTimelineHeaderRows = useCallback(() => {
           </div>
         </div>
       </div>
-    </div>
+    </div >
   );
 };
+
+export function formatDate(date: Date): string {
+  // 로컬 타임존 기준 YYYY-MM-DD
+  const year = date.getFullYear();
+  const month = (date.getMonth() + 1).toString().padStart(2, '0');
+  const day = date.getDate().toString().padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
 
 export default ScheduleChart;

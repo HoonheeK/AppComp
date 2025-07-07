@@ -4,7 +4,7 @@ import CalendarView from './components/CalendarView'; // ScheduleManage 컴포�
 import TreeComp from './components/TreeComp'; // TreeComp 컴포넌트 임포트
 import ChartComp from './components/ChartComp'; // ChartComp 컴포넌트 임포트
 import JsonToText from './components/JsonToText'; // JsonToText 컴포넌트 임포트
-import ScheduleChart from './components/ScheduleChart'; // ScheduleChart 컴포넌트 임포트
+import ScheduleChart from './components/ScheduleChart/ScheduleChart'; // ScheduleChart 컴포넌트 임포트
 
 // 내비게이션 항목의 타입을 정의합니다.
 interface NavItem {
