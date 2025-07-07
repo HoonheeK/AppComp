@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import * as d3 from 'd3';
 import { saveAs } from 'file-saver';
 import { useTreeCommands } from './useTreeCommands';
+import Minimap from "./Minimap";
 
 // 타입 정의
 type TreeNode = {
@@ -53,6 +54,14 @@ function TreeComp() {
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
 
+  // Node Space 상태
+  type NodeSpaceMode = "auto" | "custom";
+  const [nodeSpaceMode, setNodeSpaceMode] = useState<NodeSpaceMode>("auto");
+  const [customNodeHeight, setCustomNodeHeight] = useState(80);
+  const [customNodeWidth, setCustomNodeWidth] = useState(200);
+  const [showNodeSpaceDialog, setShowNodeSpaceDialog] = useState(false);
+
+
   // State for context menu
   const [showContextMenu, setShowContextMenu] = useState(false);
   const [contextMenuPosition, setContextMenuPosition] = useState({ x: 0, y: 0 });
@@ -79,6 +88,14 @@ function TreeComp() {
   // Store D3 hierarchy for navigation and inline editing position
   const d3TreeNodesRef = useRef<D3Node[] | null>(null);
   const margin = { top: 40, right: 90, bottom: 50, left: 90 };
+
+  // Minimap 상태 및 크기 상수 추가
+  const [showMinimap, setShowMinimap] = useState(true);
+  const minimapWidth = 200;
+  const minimapHeight = 120;
+
+  // Minimap 뷰포트(빨간 사각형) 위치 상태
+  const [minimapViewport, setMinimapViewport] = useState({ x: 0, y: 0 });
 
   // Helper to focus and select text in the inline input
   const focusAndSelectInput = useCallback(() => {
@@ -178,7 +195,13 @@ function TreeComp() {
 
     svg.selectAll("*").remove();
 
-    const treemap = d3.tree<TreeNode>().size([height, width]);
+    // Node Space 적용
+    let treemap: d3.TreeLayout<TreeNode>;
+    if (nodeSpaceMode === "auto") {
+      treemap = d3.tree<TreeNode>().size([height, width]);
+    } else {
+      treemap = d3.tree<TreeNode>().nodeSize([customNodeHeight, customNodeWidth]);
+    }
     const root = d3.hierarchy(treeData);
     const treeNodes = treemap(root);
 
@@ -350,7 +373,152 @@ function TreeComp() {
       .attr("font-size", "12px")
       .attr("fill", "#333");
 
-  }, [treeData, selectedNodeIds, selectedLink, dimensions, editingNodeId]);
+  }, [treeData, selectedNodeIds, selectedLink, dimensions, editingNodeId, nodeSpaceMode, customNodeHeight, customNodeWidth]);
+
+  // Tree Chart의 실제 영역(스크롤 영역) 계산
+  const getTreeChartViewBox = () => {
+    if (!containerRef.current) return { x: 0, y: 0, width: 1, height: 1 };
+    return {
+      x: containerRef.current.scrollLeft,
+      y: containerRef.current.scrollTop,
+      width: containerRef.current.clientWidth,
+      height: containerRef.current.clientHeight,
+      scrollWidth: containerRef.current.scrollWidth,
+      scrollHeight: containerRef.current.scrollHeight,
+    };
+  };
+
+  // Minimap에서 빨간 사각형 드래그 시 Tree Chart 스크롤 이동
+  const handleMinimapDrag = (e: React.MouseEvent<SVGRectElement, MouseEvent>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const svgRect = (e.target as SVGRectElement).ownerSVGElement!.getBoundingClientRect();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const startViewport = { ...minimapViewport };
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const dx = moveEvent.clientX - startX;
+      const dy = moveEvent.clientY - startY;
+
+      // 미니맵 좌표계에서의 이동량
+      const newX = Math.max(0, Math.min(startViewport.x + dx, minimapWidth - minimapWidth / 4));
+      const newY = Math.max(0, Math.min(startViewport.y + dy, minimapHeight - minimapHeight / 4));
+      setMinimapViewport({ x: newX, y: newY });
+
+      // 실제 트리 차트 스크롤 이동
+      if (containerRef.current) {
+        const { scrollWidth, scrollHeight, clientWidth, clientHeight } = containerRef.current;
+        const scaleX = (scrollWidth - clientWidth) / (minimapWidth - minimapWidth / 4);
+        const scaleY = (scrollHeight - clientHeight) / (minimapHeight - minimapHeight / 4);
+        containerRef.current.scrollLeft = newX * scaleX;
+        containerRef.current.scrollTop = newY * scaleY;
+      }
+    };
+
+    const onMouseUp = () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+  };
+
+  // 미니맵 뷰포트 위치를 트리 차트 스크롤에 맞게 동기화
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const { scrollLeft, scrollTop, scrollWidth, scrollHeight, clientWidth, clientHeight } = containerRef.current;
+    const x = (scrollLeft / (scrollWidth - clientWidth)) * (minimapWidth - minimapWidth / 4) || 0;
+    const y = (scrollTop / (scrollHeight - clientHeight)) * (minimapHeight - minimapHeight / 4) || 0;
+    setMinimapViewport({ x, y });
+  }, [dimensions, treeData]);
+
+  // Minimap 렌더링 함수
+  const renderMinimap = () => {
+    if (!treeData || !dimensions.width || !dimensions.height) return null;
+
+    // 트리 구조 계산 (minimap용)
+    const treemap = d3.tree<TreeNode>().size([minimapHeight - 20, minimapWidth - 20]);
+    const root = d3.hierarchy(treeData);
+    const treeNodes = treemap(root);
+
+    // 노드와 링크 데이터
+    const nodes = treeNodes.descendants().filter(d => d.data.id !== "virtual-root-container");
+    const links = treeNodes.links().filter(d => d.source.data.id !== "virtual-root-container");
+
+    // 빨간 사각형(뷰포트) 크기
+    const viewportW = minimapWidth / 4;
+    const viewportH = minimapHeight / 4;
+
+    return (
+      <svg
+        width={minimapWidth}
+        height={minimapHeight}
+        style={{
+          background: "#f8fafc",
+          border: "1px solid #e5e7eb",
+          borderRadius: 8,
+          boxShadow: "0 2px 8px rgba(0,0,0,0.07)",
+          display: showMinimap ? "block" : "none"
+        }}
+      >
+        <g transform={`translate(10,10)`}>
+          {/* 링크(선) */}
+          {links.map((d, i) => (
+            <path
+              key={i}
+              d={d3.linkHorizontal()
+                .x((n: any) => n.y)
+                .y((n: any) => n.x)(d as any) as string}
+              fill="none"
+              stroke="#bbb"
+              strokeWidth={1.5}
+              markerEnd="url(#minimap-arrowhead)"
+            />
+          ))}
+          {/* 노드(원) */}
+          {nodes.map((d, i) => (
+            <circle
+              key={d.data.id}
+              cx={d.y}
+              cy={d.x}
+              r={5}
+              fill={selectedNodeIds.includes(d.data.id) ? "#ffe066" : "#fff"}
+              stroke="#6366f1"
+              strokeWidth={1.5}
+            />
+          ))}
+        </g>
+        {/* 빨간 사각형(뷰포트) */}
+        <rect
+          x={minimapViewport.x}
+          y={minimapViewport.y}
+          width={viewportW}
+          height={viewportH}
+          fill="none"
+          stroke="red"
+          strokeWidth={2}
+          style={{ cursor: "move" }}
+          onMouseDown={handleMinimapDrag}
+        />
+        {/* 화살표 마커 정의 */}
+        <defs>
+          <marker
+            id="minimap-arrowhead"
+            viewBox="0 -5 10 10"
+            refX="10"
+            refY="0"
+            markerWidth="6"
+            markerHeight="6"
+            orient="auto"
+          >
+            <path d="M0,-5L10,0L0,5" fill="#bbb" />
+          </marker>
+        </defs>
+      </svg>
+    );
+  };
 
   // Handle right-click on SVG background
   const handleSvgContextMenu = useCallback((event: React.MouseEvent<SVGSVGElement>) => {
@@ -785,12 +953,31 @@ function TreeComp() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
+  // Node Space 모드 변경 시 Tree Chart 영역 재계산
+  useEffect(() => {
+    if (containerRef.current) {
+      setDimensions({
+        width: containerRef.current.offsetWidth,
+        height: containerRef.current.offsetHeight,
+      });
+    }
+    // 필요시 미니맵 뷰포트도 동기화
+  }, [nodeSpaceMode, customNodeHeight, customNodeWidth]);
+
   return (
     <div className="flex flex-col h-screen w-[80vw] font-inter bg-gray-100 p-4">
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-2xl font-bold text-center text-indigo-700">인터랙티브 트리 컴포넌트</h1>
         <div className="flex gap-2">
-          {/* 숨겨진 파일 input (항상 1개만, 다이얼로그 밖에 둡니다) */}
+          {/* Node Space 버튼 */}
+          <button
+            className="px-4 py-1 bg-indigo-100 text-indigo-700 rounded hover:bg-indigo-200 transition"
+            onClick={() => setShowNodeSpaceDialog(true)}
+            type="button"
+          >
+            Node Space
+          </button>
+          {/* ...기존 Import/Export 버튼... */}
           <input
             type="file"
             accept="application/json"
@@ -816,6 +1003,69 @@ function TreeComp() {
         </div>
       </div>
 
+      {/* Node Space 설정 다이얼로그 */}
+      {showNodeSpaceDialog && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex justify-center items-center z-50">
+          <div className="bg-white p-6 rounded-lg shadow-xl w-96">
+            <h2 className="text-xl font-bold mb-4 text-indigo-700">Node Space 설정</h2>
+            <div className="mb-4">
+              <label className="inline-flex items-center mr-4">
+                <input
+                  type="radio"
+                  checked={nodeSpaceMode === "auto"}
+                  onChange={() => setNodeSpaceMode("auto")}
+                  className="mr-2"
+                />
+                Auto
+              </label>
+              <label className="inline-flex items-center">
+                <input
+                  type="radio"
+                  checked={nodeSpaceMode === "custom"}
+                  onChange={() => setNodeSpaceMode("custom")}
+                  className="mr-2"
+                />
+                Height/Width 지정
+              </label>
+            </div>
+            {nodeSpaceMode === "custom" && (
+              <div className="flex gap-4 mb-4">
+                <label className="flex flex-col text-sm">
+                  Height
+                  <input
+                    type="number"
+                    min={20}
+                    max={500}
+                    value={customNodeHeight}
+                    onChange={e => setCustomNodeHeight(Number(e.target.value))}
+                    className="border rounded px-2 py-1 mt-1"
+                  />
+                </label>
+                <label className="flex flex-col text-sm">
+                  Width
+                  <input
+                    type="number"
+                    min={20}
+                    max={800}
+                    value={customNodeWidth}
+                    onChange={e => setCustomNodeWidth(Number(e.target.value))}
+                    className="border rounded px-2 py-1 mt-1"
+                  />
+                </label>
+              </div>
+            )}
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setShowNodeSpaceDialog(false)}
+                className="px-4 py-2 bg-gray-300 text-gray-800 rounded-md hover:bg-gray-400 transition"
+              >
+                닫기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Selected Node Display */}
       {selectedNodeIds.length > 0 && (
         <div className="text-center mb-4 text-gray-700">
@@ -836,13 +1086,98 @@ function TreeComp() {
       ) : null}
 
       {/* Tree Visualization Area */}
-      <div ref={containerRef} className="flex-grow bg-white rounded-lg shadow-lg overflow-auto border border-gray-200 relative">
+      <div
+        ref={containerRef}
+        className="flex-grow bg-white rounded-lg shadow-lg overflow-auto border border-gray-200 relative"
+        style={{
+          width: "100%",
+          height: "100%",
+          minHeight: 300,
+          minWidth: 300,
+          // 스크롤 항상 가능하게
+          overflow: "auto"
+        }}
+      >
         <svg
           ref={svgRef}
           className="block w-full h-full"
           onContextMenu={handleSvgContextMenu}
-          onClick={handleSvgBackgroundClick} // 추가
+          onClick={handleSvgBackgroundClick}
+          style={{
+            minWidth: dimensions.width,
+            minHeight: dimensions.height,
+            // SVG가 트리 전체를 담을 수 있게
+            display: "block"
+          }}
         ></svg>
+
+        {/* Minimap - 오른쪽 아래 고정 */}
+        {nodeSpaceMode === "custom" && (
+          <div
+            style={{
+              position: "absolute",
+              right: 16,
+              bottom: 16,
+              zIndex: 30,
+              background: "transparent"
+            }}
+          >
+            <Minimap
+              treeData={treeData}
+              dimensions={dimensions}
+              selectedNodeIds={selectedNodeIds}
+              minimapWidth={minimapWidth}
+              minimapHeight={minimapHeight}
+              minimapViewport={minimapViewport}
+              showMinimap={showMinimap}
+              handleMinimapDrag={handleMinimapDrag}
+              nodeSpaceMode={nodeSpaceMode}
+              customNodeHeight={customNodeHeight}
+              customNodeWidth={customNodeWidth}
+              // 아래 props 추가
+              treeArea={(() => {
+                // 트리 전체 영역 계산
+                if (!d3TreeNodesRef.current || d3TreeNodesRef.current.length === 0) return { minX: 0, minY: 0, maxX: 1, maxY: 1 };
+                const nodes = d3TreeNodesRef.current;
+                const minX = Math.min(...nodes.map(n => n.x));
+                const maxX = Math.max(...nodes.map(n => n.x));
+                const minY = Math.min(...nodes.map(n => n.y));
+                const maxY = Math.max(...nodes.map(n => n.y));
+                return { minX, minY, maxX, maxY };
+              })()}
+              viewBox={(() => {
+                // 현재 보여지는 SVG 영역(스크롤 위치)
+                if (!containerRef.current) return { x: 0, y: 0, width: 1, height: 1 };
+                return {
+                  x: containerRef.current.scrollLeft,
+                  y: containerRef.current.scrollTop,
+                  width: containerRef.current.clientWidth,
+                  height: containerRef.current.clientHeight
+                };
+              })()}
+            />
+            <button
+              onClick={() => setShowMinimap(v => !v)}
+              style={{
+                position: "absolute",
+                right: 0,
+                bottom: minimapHeight + 8,
+                background: "#fff",
+                border: "1px solid #e5e7eb",
+                borderRadius: "50%",
+                width: 28,
+                height: 28,
+                boxShadow: "0 1px 4px rgba(0,0,0,0.07)",
+                cursor: "pointer",
+                fontSize: 12,
+                color: "#6366f1"
+              }}
+              title={showMinimap ? "미니맵 숨기기" : "미니맵 보이기"}
+            >
+              {showMinimap ? "Hide" : "Show"}
+            </button>
+          </div>
+        )}
 
         {/* Inline Edit Input Field */}
         {editingNodeId && currentEditingD3Node && (
@@ -971,7 +1306,7 @@ function TreeComp() {
                 onClick={() => {
                   if (confirmAction) confirmAction();
                 }}
-                className="px-4 py-2 bg-red-500 text-white rounded-md hover:bg-red-600 transition duration-150 ease-in-out"
+                className="px-4 py-2 bg-red-500 text-gray-500 rounded-md hover:bg-red-600 transition duration-150 ease-in-out"
               >
                 확인
               </button>
@@ -1004,7 +1339,7 @@ function TreeComp() {
               </button>
               <button
                 onClick={handleExportConfirm}
-                className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition"
+                className="px-4 py-2 bg-indigo-600 text-gray-500 rounded-md hover:bg-indigo-700 transition"
               >
                 내보내기
               </button>
