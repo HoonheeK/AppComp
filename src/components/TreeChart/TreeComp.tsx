@@ -2,18 +2,29 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import * as d3 from 'd3';
 import { saveAs } from 'file-saver';
 import { useTreeCommands } from './useTreeCommands';
-import Minimap from "./Minimap";
+// import type { TreeNode } from './types';
+import { addNode } from './commands/addNode';
+import { deleteNode } from './commands/deleteNode';
+import { editNode } from './commands/editNode';
+import { collapseExpandLayer } from './commands/collapseExpandLayer';
+// import { undo } from './commands/undo';
+// import { redo } from './commands/redo';
+// import { copyNode } from './commands/copyNode';
+// import { pasteNode } from './commands/pasteNode'; 
+// import { exportToJson } from './commands/exportToJson';
+// import { importFromJson } from './commands/importFromJson';
 
-// 타입 정의
-type TreeNode = {
+
+type TreeData = TreeNode | null;
+let clickTimer: number | null = null;
+type D3Node = d3.HierarchyPointNode<TreeNode>;
+
+export type TreeNode = {
   id: string;
   name: string;
   children: TreeNode[];
+  collapsed?: boolean;
 };
-
-type TreeData = TreeNode | null;
-
-type D3Node = d3.HierarchyPointNode<TreeNode>;
 
 // Utility function to generate unique IDs
 const generateId = () => `node-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -54,14 +65,6 @@ function TreeComp() {
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
 
-  // Node Space 상태
-  type NodeSpaceMode = "auto" | "custom";
-  const [nodeSpaceMode, setNodeSpaceMode] = useState<NodeSpaceMode>("auto");
-  const [customNodeHeight, setCustomNodeHeight] = useState(80);
-  const [customNodeWidth, setCustomNodeWidth] = useState(200);
-  const [showNodeSpaceDialog, setShowNodeSpaceDialog] = useState(false);
-
-
   // State for context menu
   const [showContextMenu, setShowContextMenu] = useState(false);
   const [contextMenuPosition, setContextMenuPosition] = useState({ x: 0, y: 0 });
@@ -89,14 +92,6 @@ function TreeComp() {
   const d3TreeNodesRef = useRef<D3Node[] | null>(null);
   const margin = { top: 40, right: 90, bottom: 50, left: 90 };
 
-  // Minimap 상태 및 크기 상수 추가
-  const [showMinimap, setShowMinimap] = useState(true);
-  const minimapWidth = 200;
-  const minimapHeight = 120;
-
-  // Minimap 뷰포트(빨간 사각형) 위치 상태
-  const [minimapViewport, setMinimapViewport] = useState({ x: 0, y: 0 });
-
   // Helper to focus and select text in the inline input
   const focusAndSelectInput = useCallback(() => {
     setTimeout(() => {
@@ -106,6 +101,12 @@ function TreeComp() {
       }
     }, 0);
   }, []);
+
+  // 동일 레이어(Depth)의 모든 노드 Collapse/Expand
+  const handleCollapseExpandLayer = (collapse: boolean) => {
+    if (!selectedNodeIds[0]) return;
+    setTreeData(prevTreeData => collapseExpandLayer(prevTreeData, selectedNodeIds, collapse));
+  };
 
   // Function to save current tree state to history
   const saveStateToHistory = useCallback((newTreeState: TreeData) => {
@@ -195,14 +196,10 @@ function TreeComp() {
 
     svg.selectAll("*").remove();
 
-    // Node Space 적용
-    let treemap: d3.TreeLayout<TreeNode>;
-    if (nodeSpaceMode === "auto") {
-      treemap = d3.tree<TreeNode>().size([height, width]);
-    } else {
-      treemap = d3.tree<TreeNode>().nodeSize([customNodeHeight, customNodeWidth]);
-    }
-    const root = d3.hierarchy(treeData);
+    const treemap = d3.tree<TreeNode>().size([height, width]);
+    // const root = d3.hierarchy(treeData);
+    const getChildren = (d: TreeNode) => d.collapsed ? null : d.children; // 자식 노드 가져오기
+    const root = d3.hierarchy(treeData, getChildren);
     const treeNodes = treemap(root);
 
     d3TreeNodesRef.current = treeNodes.descendants();
@@ -306,9 +303,12 @@ function TreeComp() {
       .attr("class", d => `node ${d.children ? "node--internal" : "node--leaf"}`)
       .attr("transform", d => `translate(${d.y},${d.x})`)
       .on("click", (_: any, d: D3Node) => {
-        setSelectedNodeIds([d.data.id]);
-        setEditingNodeId(null);
-        setShowContextMenu(false);
+        if (clickTimer) clearTimeout(clickTimer);
+        clickTimer = setTimeout(() => {
+          setSelectedNodeIds([d.data.id]);
+          setEditingNodeId(null);
+          setShowContextMenu(false);
+        }, 200); // 250ms 이내에 dblclick이 오면 click은 실행되지 않음
       })
       .on("contextmenu", (event, d: D3Node) => {
         event.preventDefault();
@@ -317,6 +317,12 @@ function TreeComp() {
         setContextMenuType('node');
         setContextMenuPosition({ x: event.pageX, y: event.pageY });
         setShowContextMenu(true);
+      })
+      .on("dblclick", (_: any, d: D3Node) => {
+        if (clickTimer) clearTimeout(clickTimer);
+        if (d.data.children && d.data.children.length > 0) {
+          handleNodeDoubleClick(d.data.id);
+        }
       })
       .on("mouseover", (event, d: D3Node) => {
         setShowTooltip(true);
@@ -361,6 +367,18 @@ function TreeComp() {
       .attr("stroke", "#6366f1")
       .attr("stroke-width", 2);
 
+    node.append("circle")
+      .attr("fill", d =>
+        d.data.collapsed
+          ? "#6366f1" // collapsed 상태면 보라색 등
+          : selectedNodeIds.includes(d.data.id)
+            ? "#ffe066"
+            : "#fff"
+      )
+      .attr("r", 10)
+      .attr("stroke", "#6366f1")
+      .attr("stroke-width", 2);
+
     node.append("text")
       .attr("dy", ".35em")
       .attr("x", 13)
@@ -373,152 +391,7 @@ function TreeComp() {
       .attr("font-size", "12px")
       .attr("fill", "#333");
 
-  }, [treeData, selectedNodeIds, selectedLink, dimensions, editingNodeId, nodeSpaceMode, customNodeHeight, customNodeWidth]);
-
-  // Tree Chart의 실제 영역(스크롤 영역) 계산
-  const getTreeChartViewBox = () => {
-    if (!containerRef.current) return { x: 0, y: 0, width: 1, height: 1 };
-    return {
-      x: containerRef.current.scrollLeft,
-      y: containerRef.current.scrollTop,
-      width: containerRef.current.clientWidth,
-      height: containerRef.current.clientHeight,
-      scrollWidth: containerRef.current.scrollWidth,
-      scrollHeight: containerRef.current.scrollHeight,
-    };
-  };
-
-  // Minimap에서 빨간 사각형 드래그 시 Tree Chart 스크롤 이동
-  const handleMinimapDrag = (e: React.MouseEvent<SVGRectElement, MouseEvent>) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const svgRect = (e.target as SVGRectElement).ownerSVGElement!.getBoundingClientRect();
-    const startX = e.clientX;
-    const startY = e.clientY;
-    const startViewport = { ...minimapViewport };
-
-    const onMouseMove = (moveEvent: MouseEvent) => {
-      const dx = moveEvent.clientX - startX;
-      const dy = moveEvent.clientY - startY;
-
-      // 미니맵 좌표계에서의 이동량
-      const newX = Math.max(0, Math.min(startViewport.x + dx, minimapWidth - minimapWidth / 4));
-      const newY = Math.max(0, Math.min(startViewport.y + dy, minimapHeight - minimapHeight / 4));
-      setMinimapViewport({ x: newX, y: newY });
-
-      // 실제 트리 차트 스크롤 이동
-      if (containerRef.current) {
-        const { scrollWidth, scrollHeight, clientWidth, clientHeight } = containerRef.current;
-        const scaleX = (scrollWidth - clientWidth) / (minimapWidth - minimapWidth / 4);
-        const scaleY = (scrollHeight - clientHeight) / (minimapHeight - minimapHeight / 4);
-        containerRef.current.scrollLeft = newX * scaleX;
-        containerRef.current.scrollTop = newY * scaleY;
-      }
-    };
-
-    const onMouseUp = () => {
-      window.removeEventListener("mousemove", onMouseMove);
-      window.removeEventListener("mouseup", onMouseUp);
-    };
-
-    window.addEventListener("mousemove", onMouseMove);
-    window.addEventListener("mouseup", onMouseUp);
-  };
-
-  // 미니맵 뷰포트 위치를 트리 차트 스크롤에 맞게 동기화
-  useEffect(() => {
-    if (!containerRef.current) return;
-    const { scrollLeft, scrollTop, scrollWidth, scrollHeight, clientWidth, clientHeight } = containerRef.current;
-    const x = (scrollLeft / (scrollWidth - clientWidth)) * (minimapWidth - minimapWidth / 4) || 0;
-    const y = (scrollTop / (scrollHeight - clientHeight)) * (minimapHeight - minimapHeight / 4) || 0;
-    setMinimapViewport({ x, y });
-  }, [dimensions, treeData]);
-
-  // Minimap 렌더링 함수
-  const renderMinimap = () => {
-    if (!treeData || !dimensions.width || !dimensions.height) return null;
-
-    // 트리 구조 계산 (minimap용)
-    const treemap = d3.tree<TreeNode>().size([minimapHeight - 20, minimapWidth - 20]);
-    const root = d3.hierarchy(treeData);
-    const treeNodes = treemap(root);
-
-    // 노드와 링크 데이터
-    const nodes = treeNodes.descendants().filter(d => d.data.id !== "virtual-root-container");
-    const links = treeNodes.links().filter(d => d.source.data.id !== "virtual-root-container");
-
-    // 빨간 사각형(뷰포트) 크기
-    const viewportW = minimapWidth / 4;
-    const viewportH = minimapHeight / 4;
-
-    return (
-      <svg
-        width={minimapWidth}
-        height={minimapHeight}
-        style={{
-          background: "#f8fafc",
-          border: "1px solid #e5e7eb",
-          borderRadius: 8,
-          boxShadow: "0 2px 8px rgba(0,0,0,0.07)",
-          display: showMinimap ? "block" : "none"
-        }}
-      >
-        <g transform={`translate(10,10)`}>
-          {/* 링크(선) */}
-          {links.map((d, i) => (
-            <path
-              key={i}
-              d={d3.linkHorizontal()
-                .x((n: any) => n.y)
-                .y((n: any) => n.x)(d as any) as string}
-              fill="none"
-              stroke="#bbb"
-              strokeWidth={1.5}
-              markerEnd="url(#minimap-arrowhead)"
-            />
-          ))}
-          {/* 노드(원) */}
-          {nodes.map((d, i) => (
-            <circle
-              key={d.data.id}
-              cx={d.y}
-              cy={d.x}
-              r={5}
-              fill={selectedNodeIds.includes(d.data.id) ? "#ffe066" : "#fff"}
-              stroke="#6366f1"
-              strokeWidth={1.5}
-            />
-          ))}
-        </g>
-        {/* 빨간 사각형(뷰포트) */}
-        <rect
-          x={minimapViewport.x}
-          y={minimapViewport.y}
-          width={viewportW}
-          height={viewportH}
-          fill="none"
-          stroke="red"
-          strokeWidth={2}
-          style={{ cursor: "move" }}
-          onMouseDown={handleMinimapDrag}
-        />
-        {/* 화살표 마커 정의 */}
-        <defs>
-          <marker
-            id="minimap-arrowhead"
-            viewBox="0 -5 10 10"
-            refX="10"
-            refY="0"
-            markerWidth="6"
-            markerHeight="6"
-            orient="auto"
-          >
-            <path d="M0,-5L10,0L0,5" fill="#bbb" />
-          </marker>
-        </defs>
-      </svg>
-    );
-  };
+  }, [treeData, selectedNodeIds, selectedLink, dimensions, editingNodeId]);
 
   // Handle right-click on SVG background
   const handleSvgContextMenu = useCallback((event: React.MouseEvent<SVGSVGElement>) => {
@@ -543,213 +416,99 @@ function TreeComp() {
     }
   };
 
+  const handleNodeDoubleClick = (nodeId: string) => {
+    setTreeData(prevTreeData => {
+      const newTreeData = JSON.parse(JSON.stringify(prevTreeData)); // Deep copy
+      const node = findNodeById(newTreeData, nodeId);
+      if (node && node.children && node.children.length > 0) {
+        node.collapsed = !node.collapsed;
+      }
+      return newTreeData;
+    });
+  };
+
   // Handlers for node operations
   const handleAddNode = useCallback((type: string) => {
     setShowContextMenu(false);
     setShowTooltip(false);
 
-    const newNode = { id: generateId(), name: 'Node', children: [] };
-
     let finalTreeData: TreeData = null;
+    let newNode: TreeNode | null = null;
 
     setTreeData(prevTreeData => {
-      let newTreeData = JSON.parse(JSON.stringify(prevTreeData)); // Deep copy
-
-      if (type === 'child') {
-        if (!selectedNodeIds[0] || !newTreeData) return prevTreeData;
-        const selectedNode = findNodeById(newTreeData, selectedNodeIds[0]);
-        if (selectedNode) {
-          selectedNode.children = selectedNode.children || [];
-          selectedNode.children.push(newNode);
-        }
-      } else if (type === 'sibling') {
-        if (!selectedNodeIds[0] || !newTreeData) return prevTreeData;
-        const { node, parent } = findNodeAndParentById(newTreeData, selectedNodeIds[0]);
-        if (parent) {
-          parent.children.push(newNode);
-        } else if (node && node.id === newTreeData.id) {
-          // If selected is a direct child of the virtual root, treat adding sibling as adding another root
-          if (newTreeData.id === "virtual-root-container" && newTreeData.children.some((child: TreeNode) => child.id === selectedNodeIds[0])) {
-            newTreeData.children.push(newNode);
-          } else {
-            // This case should ideally not happen if initialTreeData is always the container.
-            // If it's a single root that's not the virtual container, we can't add a sibling.
-            return prevTreeData;
-          }
-        }
-      } else if (type === 'parent') {
-        if (!newTreeData) return prevTreeData;
-        // If selected node is a direct child of the virtual root, its parent is the virtual root.
-        // If it's not a direct child, we need to wrap it.
-        const { node, parent } = findNodeAndParentById(newTreeData, selectedNodeIds[0]);
-
-        if (node && parent && parent.id === "virtual-root-container") {
-          // If the selected node is a direct "root" (child of virtual-root-container)
-          // Create a new node that becomes the parent of the selected node
-          const newParentNode = {
-            id: generateId(),
-            name: 'Node',
-            children: [node]
-          };
-          // Replace the old node with the new parent node in the virtual root's children
-          parent.children = parent.children.map((child: TreeNode) =>
-            child.id === node.id ? newParentNode : child
-          );
-          newTreeData = parent; // Update newTreeData to the modified parent
-        } else if (node && parent) {
-          // If it's a regular node within a subtree, make it a child of the new parent
-          const newParentNode = {
-            id: generateId(),
-            name: 'Node',
-            children: [node]
-          };
-          // Replace the old node with the new parent node in its original parent's children
-          parent.children = parent.children.map((child: TreeNode) =>
-            child.id === node.id ? newParentNode : child
-          );
-          newTreeData = newTreeData; // No change to the top-level treeData reference
-        } else if (!selectedNodeIds[0] && newTreeData.id !== "virtual-root-container") {
-          // If no node selected, but there's a single root, make new node its parent
-          const newRoot = {
-            id: generateId(),
-            name: 'Node',
-            children: [newTreeData]
-          };
-          newTreeData = newRoot;
-        } else {
-          // This case might occur if selectedNodeId is null and treeData is the virtual container
-          // or if selectedNode is the virtual container itself (which shouldn't be selectable)
-          return prevTreeData;
-        }
-
-      } else if (type === 'root') { // This case is for adding the very first root node OR adding another root
-        if (newTreeData.id === "virtual-root-container") {
-          // Already under a virtual root, just add the new node as its child
-          newTreeData.children.push(newNode);
-        } else {
-          // This should not happen if initialTreeData is always the virtual container.
-          // Fallback: If for some reason treeData is a single root, wrap it and the new node.
-          const implicitSuperRoot = {
-            id: "virtual-root-container",
-            name: "",
-            children: [newTreeData, newNode]
-          };
-          newTreeData = implicitSuperRoot;
-        }
-      }
-      finalTreeData = newTreeData; // Capture the final tree data for history
-      return newTreeData;
+      const result = addNode(
+        type,
+        prevTreeData,
+        selectedNodeIds,
+        findNodeById,
+        findNodeAndParentById,
+        generateId
+      );
+      finalTreeData = result.newTreeData;
+      newNode = result.newNode;
+      return result.newTreeData;
     });
 
-    // Save the new state to history after setTreeData has potentially batched
-    // Use a setTimeout to ensure setTreeData has initiated its update
     setTimeout(() => {
-      if (finalTreeData) {
+      if (finalTreeData && newNode) {
         saveStateToHistory(finalTreeData);
-        // Set the newly created node as selected and enter editing mode
         setSelectedNodeIds([newNode.id]);
-        setEditingNodeId(newNode.id);
-        setEditingNodeName(newNode.name);
-        focusAndSelectInput();
+        // setEditingNodeId(newNode.id);
+        // setEditingNodeName(newNode.name);
+        // focusAndSelectInput();
       }
     }, 0);
-
-
-  }, [selectedNodeIds, treeData, findNodeById, findNodeAndParentById, focusAndSelectInput, saveStateToHistory]);
+  }, [selectedNodeIds, findNodeById, findNodeAndParentById, saveStateToHistory]);
 
   const handleEditNode = useCallback(() => {
     if (!selectedNodeIds[0]) {
       setShowContextMenu(false);
       return;
     }
-    const nodeToEdit = findNodeById(treeData, selectedNodeIds[0]);
-    if (nodeToEdit) {
-      setEditingNodeId(selectedNodeIds[0]);
-      setEditingNodeName(nodeToEdit.name);
-      focusAndSelectInput();
-    }
-    setShowContextMenu(false);
-    setShowTooltip(false); // Hide tooltip when editing
-  }, [selectedNodeIds, treeData, findNodeById, focusAndSelectInput]);
-
-  const handleFinishEditing = useCallback(() => {
-    if (!editingNodeId || !editingNodeName.trim()) {
-      // If empty, revert to original name or handle error
-      const originalNode = findNodeById(treeData, editingNodeId);
-      if (originalNode) {
-        setEditingNodeName(originalNode.name); // Revert to original name if empty
-      }
-      setEditingNodeId(null);
-      return;
-    }
-
     setTreeData(prevTreeData => {
-      const newTreeData = JSON.parse(JSON.stringify(prevTreeData)); // Deep copy
-      const nodeToEdit = findNodeById(newTreeData, editingNodeId);
-      if (nodeToEdit) {
-        nodeToEdit.name = editingNodeName.trim();
-      }
-      saveStateToHistory(newTreeData); // Save this state to history
+      const newTreeData = editNode(prevTreeData, selectedNodeIds[0], editingNodeName, findNodeById);
+      saveStateToHistory(newTreeData);
       return newTreeData;
     });
     setEditingNodeId(null);
     setEditingNodeName('');
-  }, [editingNodeId, editingNodeName, treeData, findNodeById, saveStateToHistory]);
-
+    setShowContextMenu(false);
+    setShowTooltip(false);
+  }, [selectedNodeIds, editingNodeName, findNodeById, saveStateToHistory]);
 
   const handleDeleteNode = useCallback(() => {
     if (!selectedNodeIds[0]) {
       setShowContextMenu(false);
       return;
     }
-
-    // Handle deletion of a direct "root" node (child of virtual-root-container)
-    if (treeData && treeData.id === "virtual-root-container" && treeData.children.some(child => child.id === selectedNodeIds[0])) {
-      if (treeData.children.length === 1) { // If it's the last visible root
-        setConfirmMessage("마지막 루트 노드를 삭제하시겠습니까? 모든 트리가 비워집니다.");
-        setConfirmAction(() => () => {
-          setTreeData(null); // Clear the entire tree
-          setSelectedNodeIds([]);
-          setShowConfirmModal(false);
-          saveStateToHistory(null);
-        });
-        setShowConfirmModal(true);
-      } else {
+    const node = findNodeById(treeData, selectedNodeIds[0]);
+    if (node && node.children && node.children.length > 0) {
+      setConfirmMessage('이 노드에는 자식 노드가 있습니다. 정말 삭제하시겠습니까?');
+      setConfirmAction(() => () => {
         setTreeData(prevTreeData => {
-          const newTreeData = JSON.parse(JSON.stringify(prevTreeData));
-          const virtualRoot = newTreeData; // Should be the virtual-root-container
-          virtualRoot.children = virtualRoot.children.filter((child: TreeNode) => child.id !== selectedNodeIds[0]);
+          const newTreeData = deleteNode(prevTreeData, selectedNodeIds, findNodeAndParentById);
+          setTimeout(() => saveStateToHistory(newTreeData), 0);
           setSelectedNodeIds([]);
-          saveStateToHistory(newTreeData);
+          setShowContextMenu(false);
+          setShowTooltip(false);
           return newTreeData;
         });
-      }
-    } else if (treeData && selectedNodeIds[0] === treeData.id && treeData) { // If it's the very first root (not under virtual container)
-      setConfirmMessage("루트 노드를 삭제하시겠습니까? 모든 하위 노드가 삭제됩니다.");
-      setConfirmAction(() => () => {
-        setTreeData(null); // Clear the entire tree
-        setSelectedNodeIds([]);
         setShowConfirmModal(false);
-        saveStateToHistory(null);
       });
       setShowConfirmModal(true);
+      setShowContextMenu(false);
+      return;
     }
-    else { // Regular node deletion
-      setTreeData(prevTreeData => {
-        const newTreeData = JSON.parse(JSON.stringify(prevTreeData)); // Deep copy
-        const { node, parent } = findNodeAndParentById(newTreeData, selectedNodeIds[0]);
-
-        if (parent && node) {
-          parent.children = parent.children.filter(child => child.id !== selectedNodeIds[0]);
-          setSelectedNodeIds([]); // Deselect the deleted node
-        }
-        saveStateToHistory(newTreeData); // Save this state to history
-        return newTreeData;
-      });
-    }
-    setShowContextMenu(false);
-    setShowTooltip(false); // Hide tooltip when deleting
-  }, [selectedNodeIds, treeData, findNodeAndParentById, saveStateToHistory]);
+    // 자식이 없으면 바로 삭제
+    setTreeData(prevTreeData => {
+      const newTreeData = deleteNode(prevTreeData, selectedNodeIds, findNodeAndParentById);
+      setTimeout(() => saveStateToHistory(newTreeData), 0);
+      setSelectedNodeIds([]);
+      setShowContextMenu(false);
+      setShowTooltip(false);
+      return newTreeData;
+    });
+  }, [selectedNodeIds, treeData, findNodeById, findNodeAndParentById, saveStateToHistory]);
 
   // Undo/Redo functions
   const handleUndo = useCallback(() => {
@@ -919,7 +678,6 @@ function TreeComp() {
     showConfirmModal,
     editingInputRef,
     editingNodeId,
-    handleFinishEditing,
     setEditingNodeId,
     setEditingNodeName,
     handleUndo,
@@ -947,37 +705,19 @@ function TreeComp() {
         setSelectedLink(null);
         setEditingNodeId(null);
         setShowContextMenu(false);
+        setShowConfirmModal(false);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Node Space 모드 변경 시 Tree Chart 영역 재계산
-  useEffect(() => {
-    if (containerRef.current) {
-      setDimensions({
-        width: containerRef.current.offsetWidth,
-        height: containerRef.current.offsetHeight,
-      });
-    }
-    // 필요시 미니맵 뷰포트도 동기화
-  }, [nodeSpaceMode, customNodeHeight, customNodeWidth]);
-
   return (
     <div className="flex flex-col h-screen w-[80vw] font-inter bg-gray-100 p-4">
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-2xl font-bold text-center text-indigo-700">인터랙티브 트리 컴포넌트</h1>
         <div className="flex gap-2">
-          {/* Node Space 버튼 */}
-          <button
-            className="px-4 py-1 bg-indigo-100 text-indigo-700 rounded hover:bg-indigo-200 transition"
-            onClick={() => setShowNodeSpaceDialog(true)}
-            type="button"
-          >
-            Node Space
-          </button>
-          {/* ...기존 Import/Export 버튼... */}
+          {/* 숨겨진 파일 input (항상 1개만, 다이얼로그 밖에 둡니다) */}
           <input
             type="file"
             accept="application/json"
@@ -1003,74 +743,11 @@ function TreeComp() {
         </div>
       </div>
 
-      {/* Node Space 설정 다이얼로그 */}
-      {showNodeSpaceDialog && (
-        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex justify-center items-center z-50">
-          <div className="bg-white p-6 rounded-lg shadow-xl w-96">
-            <h2 className="text-xl font-bold mb-4 text-indigo-700">Node Space 설정</h2>
-            <div className="mb-4">
-              <label className="inline-flex items-center mr-4">
-                <input
-                  type="radio"
-                  checked={nodeSpaceMode === "auto"}
-                  onChange={() => setNodeSpaceMode("auto")}
-                  className="mr-2"
-                />
-                Auto
-              </label>
-              <label className="inline-flex items-center">
-                <input
-                  type="radio"
-                  checked={nodeSpaceMode === "custom"}
-                  onChange={() => setNodeSpaceMode("custom")}
-                  className="mr-2"
-                />
-                Height/Width 지정
-              </label>
-            </div>
-            {nodeSpaceMode === "custom" && (
-              <div className="flex gap-4 mb-4">
-                <label className="flex flex-col text-sm">
-                  Height
-                  <input
-                    type="number"
-                    min={20}
-                    max={500}
-                    value={customNodeHeight}
-                    onChange={e => setCustomNodeHeight(Number(e.target.value))}
-                    className="border rounded px-2 py-1 mt-1"
-                  />
-                </label>
-                <label className="flex flex-col text-sm">
-                  Width
-                  <input
-                    type="number"
-                    min={20}
-                    max={800}
-                    value={customNodeWidth}
-                    onChange={e => setCustomNodeWidth(Number(e.target.value))}
-                    className="border rounded px-2 py-1 mt-1"
-                  />
-                </label>
-              </div>
-            )}
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setShowNodeSpaceDialog(false)}
-                className="px-4 py-2 bg-gray-300 text-gray-800 rounded-md hover:bg-gray-400 transition"
-              >
-                닫기
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Selected Node Display */}
       {selectedNodeIds.length > 0 && (
         <div className="text-center mb-4 text-gray-700">
           선택된 노드 ID: <span className="font-semibold text-indigo-600">{selectedNodeIds.join(', ')}</span>
-          <br />
+          &nbsp;|&nbsp;
           선택된 노드 이름: <span className="font-semibold text-indigo-600">{selectedNodeIds.map(id => findNodeById(treeData, id)?.name).join(', ') || 'N/A'}</span>
         </div>
       )}
@@ -1086,98 +763,13 @@ function TreeComp() {
       ) : null}
 
       {/* Tree Visualization Area */}
-      <div
-        ref={containerRef}
-        className="flex-grow bg-white rounded-lg shadow-lg overflow-auto border border-gray-200 relative"
-        style={{
-          width: "100%",
-          height: "100%",
-          minHeight: 300,
-          minWidth: 300,
-          // 스크롤 항상 가능하게
-          overflow: "auto"
-        }}
-      >
+      <div ref={containerRef} className="flex-grow bg-white rounded-lg shadow-lg overflow-auto border border-gray-200 relative">
         <svg
           ref={svgRef}
           className="block w-full h-full"
           onContextMenu={handleSvgContextMenu}
-          onClick={handleSvgBackgroundClick}
-          style={{
-            minWidth: dimensions.width,
-            minHeight: dimensions.height,
-            // SVG가 트리 전체를 담을 수 있게
-            display: "block"
-          }}
+          onClick={handleSvgBackgroundClick} // 추가
         ></svg>
-
-        {/* Minimap - 오른쪽 아래 고정 */}
-        {nodeSpaceMode === "custom" && (
-          <div
-            style={{
-              position: "absolute",
-              right: 16,
-              bottom: 16,
-              zIndex: 30,
-              background: "transparent"
-            }}
-          >
-            <Minimap
-              treeData={treeData}
-              dimensions={dimensions}
-              selectedNodeIds={selectedNodeIds}
-              minimapWidth={minimapWidth}
-              minimapHeight={minimapHeight}
-              minimapViewport={minimapViewport}
-              showMinimap={showMinimap}
-              handleMinimapDrag={handleMinimapDrag}
-              nodeSpaceMode={nodeSpaceMode}
-              customNodeHeight={customNodeHeight}
-              customNodeWidth={customNodeWidth}
-              // 아래 props 추가
-              treeArea={(() => {
-                // 트리 전체 영역 계산
-                if (!d3TreeNodesRef.current || d3TreeNodesRef.current.length === 0) return { minX: 0, minY: 0, maxX: 1, maxY: 1 };
-                const nodes = d3TreeNodesRef.current;
-                const minX = Math.min(...nodes.map(n => n.x));
-                const maxX = Math.max(...nodes.map(n => n.x));
-                const minY = Math.min(...nodes.map(n => n.y));
-                const maxY = Math.max(...nodes.map(n => n.y));
-                return { minX, minY, maxX, maxY };
-              })()}
-              viewBox={(() => {
-                // 현재 보여지는 SVG 영역(스크롤 위치)
-                if (!containerRef.current) return { x: 0, y: 0, width: 1, height: 1 };
-                return {
-                  x: containerRef.current.scrollLeft,
-                  y: containerRef.current.scrollTop,
-                  width: containerRef.current.clientWidth,
-                  height: containerRef.current.clientHeight
-                };
-              })()}
-            />
-            <button
-              onClick={() => setShowMinimap(v => !v)}
-              style={{
-                position: "absolute",
-                right: 0,
-                bottom: minimapHeight + 8,
-                background: "#fff",
-                border: "1px solid #e5e7eb",
-                borderRadius: "50%",
-                width: 28,
-                height: 28,
-                boxShadow: "0 1px 4px rgba(0,0,0,0.07)",
-                cursor: "pointer",
-                fontSize: 12,
-                color: "#6366f1"
-              }}
-              title={showMinimap ? "미니맵 숨기기" : "미니맵 보이기"}
-            >
-              {showMinimap ? "Hide" : "Show"}
-            </button>
-          </div>
-        )}
 
         {/* Inline Edit Input Field */}
         {editingNodeId && currentEditingD3Node && (
@@ -1186,10 +778,10 @@ function TreeComp() {
             type="text"
             value={editingNodeName}
             onChange={(e) => setEditingNodeName(e.target.value)}
-            onBlur={handleFinishEditing}
+            onBlur={() => { setEditingNodeId(null); setEditingNodeName(''); }}
             onKeyDown={(e) => { // <-- 여기만 변경!
               if (e.key === 'Enter') {
-                handleFinishEditing();
+                setEditingNodeId(null); setEditingNodeName('');
               }
             }}
             className="absolute p-1 border border-indigo-400 rounded-md bg-white text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-md"
@@ -1268,6 +860,18 @@ function TreeComp() {
             >
               노드 삭제 (Delete)
             </button>
+            <button
+              className="block w-full text-left px-4 py-2 text-gray-700 hover:bg-indigo-100"
+              onClick={() => handleCollapseExpandLayer(true)}
+            >
+              동일 레이어 접기 (Ctrl+)
+            </button>
+            <button
+              className="block w-full text-left px-4 py-2 text-gray-700 hover:bg-indigo-100"
+              onClick={() => handleCollapseExpandLayer(false)}
+            >
+              동일 레이어 펴기 (Ctrl-)
+            </button>
           </>
           )}
           {contextMenuType === 'link' && selectedLink && (
@@ -1291,7 +895,7 @@ function TreeComp() {
 
       {/* Custom Confirmation Modal */}
       {showConfirmModal && (
-        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex justify-center items-center z-50">
+        <div className="fixed inset-0 bg-gray-100 bg-opacity-40 flex justify-center items-center">
           <div className="bg-white p-6 rounded-lg shadow-xl w-96">
             <h2 className="text-xl font-bold mb-4 text-indigo-700">확인</h2>
             <p className="mb-4 text-gray-700">{confirmMessage}</p>
@@ -1339,7 +943,7 @@ function TreeComp() {
               </button>
               <button
                 onClick={handleExportConfirm}
-                className="px-4 py-2 bg-indigo-600 text-gray-500 rounded-md hover:bg-indigo-700 transition"
+                className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition"
               >
                 내보내기
               </button>

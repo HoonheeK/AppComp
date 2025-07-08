@@ -22,3 +22,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# exclude files
+src/components/TreeChart/commands/*
+___*
+
+
