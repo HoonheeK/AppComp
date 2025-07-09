@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { saveAs } from 'file-saver';
+import { useState, useEffect, useRef } from 'react';
 import type { ChangeEvent } from 'react';
 
 // JSON 노드 구조를 위한 인터페이스 정의
@@ -16,6 +17,18 @@ const JsonToText = () => {
   const [nameOutput, setNameOutput] = useState<string>('');
   // 에러 메시지 상태
   const [error, setError] = useState<string>('');
+  const [exportFileName, setExportFileName] = useState('export.json');
+
+  // JSON 파일 출력 함수
+  const handleExportJson = () => {
+    try {
+      const jsonStr = JSON.stringify(JSON.parse(jsonInput), null, 2);
+      const blob = new Blob([jsonStr], { type: 'application/json' });
+      saveAs(blob, exportFileName || 'export.json');
+    } catch (e) {
+      setError('유효한 JSON만 파일로 저장할 수 있습니다.');
+    }
+  };
 
   // JSON -> 이름 텍스트 변환 함수
   const convertJsonToNames = (): void => {
@@ -152,8 +165,8 @@ const JsonToText = () => {
   }, []);
 
   return (
-    <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4 font-inter">
-      <div className="bg-white p-8 rounded-lg shadow-lg w-full max-w-4xl">
+    <div className="flex-1 min-h-screen bg-gray-100 flex items-top justify-center p-4 font-inter w-[80vw]">
+      <div className="bg-white p-8 rounded-lg shadow-lg w-full ">
         <h1 className="text-3xl font-bold text-center text-gray-800 mb-8">JSON Name Extractor</h1>
 
         {error && (
@@ -165,37 +178,67 @@ const JsonToText = () => {
 
         <div className="flex flex-col md:flex-row space-y-6 md:space-y-0 md:space-x-6">
           {/* JSON 입력 섹션 */}
-          <div className="flex-1">
-            <label htmlFor="json-input" className="block text-gray-700 text-sm font-bold mb-2">
-              JSON 입력:
-            </label>
+          <div className="flex flex-col w-[40vw]">
+            <div className="flex flex-row items-center mt-2 gap-2">
+              <label htmlFor="json-input" className="block text-gray-700 text-sm font-bold mb-2">
+                JSON 입력:
+              </label>
+              <input
+                type="text"
+                className="border rounded px-2 py-1 text-sm w-48 "
+                value={exportFileName}
+                onChange={e => setExportFileName(e.target.value)}
+                placeholder="파일명을 입력하세요 (예: export.json)"
+              />
+              <button
+                onClick={handleExportJson}
+                className="flex bg-indigo-500 hover:bg-indigo-700 text-gray-700 font-bold py-1 px-4 rounded transition"
+                title="JSON 파일로 저장"
+              >
+                JSON 파일 출력
+              </button>
+            </div>
             <textarea
               id="json-input"
               className="shadow appearance-none border rounded-lg w-full py-3 px-4 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500 h-64 md:h-96 resize-y"
               placeholder="여기에 JSON을 입력하세요..."
               value={jsonInput}
               onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setJsonInput(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Tab') {
+                  e.preventDefault();
+                  const { selectionStart, selectionEnd } = e.currentTarget;
+                  setJsonInput(
+                    jsonInput.substring(0, selectionStart) + '\t' + jsonInput.substring(selectionEnd)
+                  );
+                  // 커서 위치 조정은 필요시 useRef로 처리
+                  setTimeout(() => {
+                    const textarea = e.currentTarget;
+                    textarea.selectionStart = textarea.selectionEnd = selectionStart + 1;
+                  }, 0);
+                }
+              }}
             ></textarea>
           </div>
 
           {/* 변환 버튼 섹션 */}
-          <div className="flex flex-col items-center justify-center space-y-4 md:space-y-0 md:space-x-4 md:flex-row">
+          <div className="flex flex-col items-center justify-center space-y-4 md:space-y-5 md:space-x-4">
             <button
               onClick={convertJsonToNames}
-              className=" bg-blue-500 hover:bg-blue-700 text-green-500 font-bold py-3 px-6 rounded-full shadow-lg transition duration-300 ease-in-out transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 w-24"
+              className=" bg-blue-500 hover:bg-blue-700 text-green-500 font-bold py-3 px-6 rounded-full shadow-lg transition duration-300 ease-in-out transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 w-16"
             >
               &rarr;
             </button>
             <button
               onClick={convertNamesToJson}
-              className="bg-green-500 hover:bg-green-700 text-red-500 font-bold py-3 px-6 rounded-full shadow-lg transition duration-300 ease-in-out transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-50 w-24"
+              className="bg-green-500 hover:bg-green-700 text-red-500 font-bold py-3 px-6 rounded-full shadow-lg transition duration-300 ease-in-out transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-50 w-16"
             >
               &larr;
             </button>
           </div>
 
           {/* 이름 출력 섹션 */}
-          <div className="flex-1">
+          <div className="flex w-[40vw] flex-col">
             <label htmlFor="name-output" className="block text-gray-700 text-sm font-bold mb-2">
               Name 값만 추출:
             </label>
@@ -205,6 +248,20 @@ const JsonToText = () => {
               placeholder="추출된 name 값들이 여기에 표시됩니다..."
               value={nameOutput}
               onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setNameOutput(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Tab') {
+                  e.preventDefault();
+                  const { selectionStart, selectionEnd } = e.currentTarget;
+                  setNameOutput(
+                    nameOutput.substring(0, selectionStart) + '\t' + nameOutput.substring(selectionEnd)
+                  );
+                  // 커서 위치 조정은 필요시 useRef로 처리
+                  setTimeout(() => {
+                    const textarea = e.currentTarget;
+                    textarea.selectionStart = textarea.selectionEnd = selectionStart + 1;
+                  }, 0);
+                }
+              }}
             ></textarea>
           </div>
         </div>

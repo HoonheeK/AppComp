@@ -88,6 +88,13 @@ function TreeComp() {
   // State to store the calculated minimum Y offset for tree translation
   const [minYOffset, setMinYOffset] = useState(0);
 
+  // Search
+  const [showSearchBar, setShowSearchBar] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<string[]>([]);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const [searchActiveIndex, setSearchActiveIndex] = useState(0);
+
   // Store D3 hierarchy for navigation and inline editing position
   const d3TreeNodesRef = useRef<D3Node[] | null>(null);
   const margin = { top: 40, right: 90, bottom: 50, left: 90 };
@@ -700,7 +707,16 @@ function TreeComp() {
   // ESC 키로 선택 해제
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        setShowSearchBar(true);
+        setTimeout(() => searchInputRef.current?.focus(), 0);
+      }
+      if (e.key === 'Escape' && showSearchBar) {
+        setShowSearchBar(false);
+        setSearchQuery('');
+        setSearchResults([]);
+      } else if (e.key === 'Escape') {
         setSelectedNodeIds([]);
         setSelectedLink(null);
         setEditingNodeId(null);
@@ -710,7 +726,37 @@ function TreeComp() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  }, [showSearchBar]);
+
+  // 검색 실행
+  useEffect(() => {
+    if (!searchQuery) {
+      setSearchResults([]);
+      return;
+    }
+    const results: string[] = [];
+    function traverse(node: TreeNode) {
+      if (node.name.toLowerCase().includes(searchQuery.toLowerCase())) {
+        results.push(node.id);
+      }
+      node.children?.forEach(traverse);
+    }
+    if (treeData) {
+      if (treeData.id === "virtual-root-container") {
+        treeData.children.forEach(traverse);
+      } else {
+        traverse(treeData);
+      }
+    }
+    setSearchResults(results);
+  }, [searchQuery, treeData]);
+
+  useEffect(() => {
+   if (searchActiveIndex >= searchResults.length && searchResults.length > 0) {
+    setSearchActiveIndex(0);
+    setSelectedNodeIds([searchResults[0]]);
+  }
+  }, [searchActiveIndex, searchResults]);
 
   return (
     <div className="flex flex-col h-screen w-[80vw] font-inter bg-gray-100 p-4">
@@ -808,6 +854,81 @@ function TreeComp() {
           }}
         >
           {tooltipContent}
+        </div>
+      )}
+
+      {/* Custom Search Bar */}
+      {showSearchBar && (
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 flex items-center bg-white border border-gray-300 rounded shadow-lg px-4 py-2 w-[500px]">
+          <input
+            ref={searchInputRef}
+            type="text"
+            className="flex-1 outline-none text-base px-2"
+            placeholder="검색어를 입력하세요"
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Escape') {
+                setShowSearchBar(false);
+                setSearchQuery('');
+                setSearchResults([]);
+              }
+              if (e.key === 'Enter' && searchResults.length > 0) {
+                // Enter로 Next 이동
+                setSearchActiveIndex(idx => {
+                  const next = (idx + 1) % searchResults.length;
+                  setSelectedNodeIds([searchResults[next]]);
+                  return next;
+                });
+              }
+            }}
+          />
+          <span className="ml-2 text-sm text-gray-500">
+            {searchResults.length > 0 ? `${searchResults.length}` : ''}
+          </span>
+          <button
+            className="ml-2 text-gray-400 hover:text-gray-700"
+            onClick={() => {
+              if (searchResults.length > 0) {
+                setSearchActiveIndex(idx => {
+                  const prev = (idx - 1 + searchResults.length) % searchResults.length;
+                  setSelectedNodeIds([searchResults[prev]]);
+                  return prev;
+                });
+              }
+            }}
+            disabled={searchResults.length === 0}
+            title="이전"
+          >
+            ◀
+          </button>
+          <button
+            className="ml-1 text-gray-400 hover:text-gray-700"
+            onClick={() => {
+              if (searchResults.length > 0) {
+                setSearchActiveIndex(idx => {
+                  const next = (idx + 1) % searchResults.length;
+                  setSelectedNodeIds([searchResults[next]]);
+                  return next;
+                });
+              }
+            }}
+            disabled={searchResults.length === 0}
+            title="다음"
+          >
+            ▶
+          </button>
+          <button
+            className="ml-2 text-gray-400 hover:text-gray-700"
+            onClick={() => {
+              setShowSearchBar(false);
+              setSearchQuery('');
+              setSearchResults([]);
+            }}
+            title="닫기"
+          >
+            ×
+          </button>
         </div>
       )}
 
