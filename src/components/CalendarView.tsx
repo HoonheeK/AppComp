@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import type { ChangeEvent } from 'react';
+import Flatpickr from 'react-flatpickr';
+import 'flatpickr/dist/flatpickr.min.css';
 
 // 이벤트 타입 정의
 type ScheduleEvent = {
@@ -35,15 +37,17 @@ const LOCAL_STORAGE_KEY = 'schedule_app_events';
 
 function CalendarView() {
   const [currentDate, setCurrentDate] = useState<Date>(new Date());
-  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  // const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [events, setEvents] = useState<ScheduleEvent[]>([]);
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [eventTitle, setEventTitle] = useState<string>('');
   const [eventDescription, setEventDescription] = useState<string>('');
   const [eventTime, setEventTime] = useState<string>('');
   const [editingEvent, setEditingEvent] = useState<ScheduleEvent | null>(null);
-  const [eventStartDate, setEventStartDate] = useState<string>(getTodayDate());
-  const [eventEndDate, setEventEndDate] = useState<string>(getTodayDate());
+  // const [eventStartDate, setEventStartDate] = useState<string>(getTodayDate());
+  // const [eventEndDate, setEventEndDate] = useState<string>(getTodayDate());
+  const [eventDateRange, setEventDateRange] = useState<Date[]>([]);
+
 
   // 로컬 스토리지에서 이벤트 불러오기 및 저장
   useEffect(() => {
@@ -63,9 +67,9 @@ function CalendarView() {
   }, [events]);
 
   const handleDateClick = (day: number) => {
-    const date = formatDate(new Date(currentDate.getFullYear(), currentDate.getMonth(), day));
-    setEventStartDate(date);
-    setEventEndDate(date);
+    // day를 기반으로 첫 번째 날짜를 Date 객체로 생성
+    const firstDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), day);
+    setEventDateRange([firstDate]); // 첫 번째 날짜만 배열로 세팅
     setIsModalOpen(true);
     setEventTitle('');
     setEventDescription('');
@@ -74,8 +78,7 @@ function CalendarView() {
   };
 
   const handleEventEdit = (event: ScheduleEvent) => {
-    setEventStartDate(event.startDate);
-    setEventEndDate(event.endDate);
+    setEventDateRange([new Date(event.startDate), new Date(event.endDate)]);
     setEventTitle(event.title);
     setEventDescription(event.description);
     setEventTime(event.time || '');
@@ -94,10 +97,18 @@ function CalendarView() {
   };
 
   const handleSaveEvent = () => {
-    if (!eventStartDate || !eventEndDate || !eventTitle.trim()) return;
+    if ( 
+      eventDateRange.length === 0 ||
+      !eventDateRange[0] ||
+      !eventTitle.trim()
+    ) return;
+    // date가 하나만 선택된 경우, 두 번째 값을 첫 번째 값과 동일하게 세팅
+    const start = eventDateRange[0];
+    const end = eventDateRange.length === 2 && eventDateRange[1] ? eventDateRange[1] : eventDateRange[0];
+
     const eventData: Omit<ScheduleEvent, 'id'> = {
-      startDate: eventStartDate,
-      endDate: eventEndDate,
+      startDate: formatDate(start),
+      endDate: formatDate(end),
       title: eventTitle.trim(),
       description: eventDescription.trim(),
       time: eventTime.trim(),
@@ -135,12 +146,12 @@ function CalendarView() {
         fullDate >= event.startDate && fullDate <= event.endDate
       );
       const isToday = fullDate === getTodayDate();
-      const isSelected = fullDate === selectedDate;
+      // const isSelected = fullDate === selectedDate;
 
       days.push(
         <div
           key={day}
-          className={`p-2 border border-gray-200 cursor-pointer relative min-h-[100px] flex flex-col ${isToday ? 'bg-blue-100' : 'bg-white'} ${isSelected ? 'ring-2 ring-blue-500' : ''} rounded-lg shadow-sm hover:shadow-md transition-shadow duration-200`}
+          className={`p-2 border border-gray-200 cursor-pointer relative min-h-[100px] flex flex-col ${isToday ? 'bg-blue-100' : 'bg-white'} rounded-lg shadow-sm hover:shadow-md transition-shadow duration-200`}
           onClick={() => handleDateClick(day)}
         >
           <div className={`font-bold text-lg ${isToday ? 'text-blue-700' : 'text-gray-800'}`}>
@@ -169,7 +180,7 @@ function CalendarView() {
       );
     }
     return days;
-  }, [currentDate, events, selectedDate, handleDateClick, handleEventEdit, handleEventDelete]);
+  }, [currentDate, events, handleDateClick, handleEventEdit, handleEventDelete]);
 
   const goToPreviousMonth = () => {
     setCurrentDate(prevDate => new Date(prevDate.getFullYear(), prevDate.getMonth() - 1, 1));
@@ -246,33 +257,19 @@ function CalendarView() {
             <h3 className="text-2xl font-bold text-gray-800 mb-4">
               {editingEvent ? '이벤트 편집' : '새 이벤트 추가'}
             </h3>
-            <p className="text-gray-600 mb-4">선택된 날짜: <span className="font-semibold">{selectedDate}</span></p>
-            <div className="mb-4 flex gap-2">
-              <div className="flex-1">
-                <label htmlFor="eventStartDate" className="block text-gray-700 text-sm font-bold mb-2">
-                  시작일:
-                </label>
-                <input
-                  type="date"
-                  id="eventStartDate"
-                  className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  value={eventStartDate}
-                  onChange={(e: ChangeEvent<HTMLInputElement>) => setEventStartDate(e.target.value)}
-                />
-              </div>
-              <div className="flex-1">
-                <label htmlFor="eventEndDate" className="block text-gray-700 text-sm font-bold mb-2">
-                  종료일:
-                </label>
-                <input
-                  type="date"
-                  id="eventEndDate"
-                  className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  value={eventEndDate}
-                  min={eventStartDate}
-                  onChange={(e: ChangeEvent<HTMLInputElement>) => setEventEndDate(e.target.value)}
-                />
-              </div>
+            <div className="mb-4 flex-row gap-2">
+              <label className="block text-gray-700 text-sm font-bold mb-2">
+                일정 기간:
+              </label>
+              <Flatpickr
+                options={{ mode: 'range', dateFormat: 'Y-m-d' }}
+                value={eventDateRange}
+                onChange={dates => {
+                  setEventDateRange(dates as Date[]);
+                }}
+                className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="날짜를 선택하세요"
+              />
             </div>
             <div className="mb-4">
               <label htmlFor="eventTitle" className="block text-gray-700 text-sm font-bold mb-2">
@@ -320,8 +317,12 @@ function CalendarView() {
               </button>
               <button
                 onClick={handleSaveEvent}
-                className="px-5 py-2 bg-blue-500 text-white rounded-lg shadow-md hover:bg-blue-600 transition duration-200"
-                disabled={!eventTitle.trim() || !eventStartDate || !eventEndDate}
+                className="px-5 py-2 bg-blue-500 text-gray-500 rounded-lg shadow-md hover:bg-blue-600 transition duration-200"
+                disabled={
+                  !eventTitle.trim() ||
+                  eventDateRange.length === 0 ||
+                  !eventDateRange[0] 
+                }
               >
                 {editingEvent ? '저장' : '추가'}
               </button>
