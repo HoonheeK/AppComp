@@ -92,7 +92,7 @@ const NonWorkingDayPicker: React.FC<NonWorkingDayPickerProps> = ({ initialNonWor
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+    <div className="fixed inset-0 bg-[rgba(0,0,0,0.4)]  flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-lg shadow-2xl p-6 w-full max-w-4xl max-h-[90vh] overflow-y-auto">
         <h2 className="text-2xl font-bold mb-4 text-gray-800">Non-Working Days 설정 ({year}년)</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 mb-6">
@@ -107,7 +107,7 @@ const NonWorkingDayPicker: React.FC<NonWorkingDayPickerProps> = ({ initialNonWor
             닫기
           </button>
           <button
-            className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors"
+            className="px-4 py-2 bg-indigo-600 text-gray-500 rounded-md hover:bg-indigo-700 transition-colors"
             onClick={() => onSave(selectedDays)}
             type="button"
           >
@@ -728,7 +728,7 @@ const ScheduleChart: React.FC = () => {
 
       {/* Task 추가 모달 */}
       {showAddTaskModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-[rgba(0,0,0,0.4)]  flex items-center justify-center z-50">
           <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-sm">
             <h2 className="text-xl font-bold mb-4 text-gray-800">새 Task 추가</h2>
             <div className="mb-3">

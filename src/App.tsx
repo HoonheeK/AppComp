@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
-import { Database, FolderSync, FileStack, Home, LayoutDashboard, Settings, Users, ChevronRight, ChevronDown, Folder, FileText, BarChart, Bell, Component, CalendarCheck, Network, ChartColumn, Package } from 'lucide-react'; // 아이콘 임포트
+import { Grid3x3, Database, FolderSync, FileStack, Home, LayoutDashboard, Settings, Users, ChevronRight, ChevronDown, Folder, FileText, BarChart, Bell, Component, CalendarCheck, Network, ChartColumn, Package } from 'lucide-react'; // 아이콘 임포트
 import CalendarView from './components/CalendarView'; // ScheduleManage 컴포넌트 임포트
 import TreeComp from './components/TreeChart/TreeComp'; // TreeComp 컴포넌트 임포트
 import ChartComp from './components/ChartComp'; // ChartComp 컴포넌트 임포트
 import JsonToText from './components/JsonToText'; // JsonToText 컴포넌트 임포트
 import ScheduleChart from './components/ScheduleChart/ScheduleChart'; // ScheduleChart 컴포넌트 임포트
+import MatrixD3 from './components/MatrixD3'; // Matrix 컴포넌트 임포트
+import MatrixReact from './components/MatrixReact'; // Matrix 컴포넌트 임포트
 
 // 내비게이션 항목의 타입을 정의합니다.
 interface NavItem {
@@ -66,6 +68,22 @@ const navItems: NavItem[] = [
         name: 'Chart 관리',
         icon: ChartColumn,
         path: '/components/ChartComp',
+      },
+      {
+        name: 'Matrix',
+        icon: Grid3x3,
+        children: [
+          {
+            name: 'Matrix D3',
+            icon: Grid3x3,
+            path: '/components/MatrixD3',
+          },
+          {
+            name: 'Matrix React',
+            icon: Grid3x3,
+            path: '/components/MatrixReact',
+          },
+        ],
       },
     ],
   },
@@ -382,7 +400,11 @@ const App: React.FC = () => {
             ) : activePath === '/components/JsonToText' ? (
               <JsonToText />
             ) : activePath === '/components/ScheduleChart' ? (
-              <ScheduleChart />              
+              <ScheduleChart />
+            ) : activePath === '/components/MatrixD3' ? (
+              <MatrixD3 />
+            ) : activePath === '/components/MatrixReact' ? (
+              <MatrixReact />
             ) : (
               <>
                 <h2 className="text-3xl font-bold text-gray-800 mb-4">환영합니다!</h2>

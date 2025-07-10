@@ -27,6 +27,7 @@
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-flatpickr": "^4.0.11",
+    "react-window": "^1.8.11",
     "use-immer": "^0.11.0"
   },
   "devDependencies": {
@@ -36,6 +37,7 @@
     "@types/flatpickr": "^3.0.2",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
+    "@types/react-window": "^1.8.8",
     "@vitejs/plugin-react": "^4.5.2",
     "autoprefixer": "^10.4.21",
     "eslint": "^9.29.0",
