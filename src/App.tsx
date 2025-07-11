@@ -7,6 +7,7 @@ import JsonToText from './components/JsonToText'; // JsonToText 컴포넌트 임
 import ScheduleChart from './components/ScheduleChart/ScheduleChart'; // ScheduleChart 컴포넌트 임포트
 import MatrixD3 from './components/MatrixD3'; // Matrix 컴포넌트 임포트
 import MatrixReact from './components/MatrixReact'; // Matrix 컴포넌트 임포트
+import MatrixVirtual from './components/MatrixVirtual'; // Matrix 컴포넌트 임포트
 
 // 내비게이션 항목의 타입을 정의합니다.
 interface NavItem {
@@ -82,6 +83,11 @@ const navItems: NavItem[] = [
             name: 'Matrix React',
             icon: Grid3x3,
             path: '/components/MatrixReact',
+          },
+                    {
+            name: 'Matrix Virtualization',
+            icon: Grid3x3,
+            path: '/components/MatrixVirtual',
           },
         ],
       },
@@ -405,6 +411,8 @@ const App: React.FC = () => {
               <MatrixD3 />
             ) : activePath === '/components/MatrixReact' ? (
               <MatrixReact />
+            ) : activePath === '/components/MatrixVirtual' ? (
+              <MatrixVirtual />              
             ) : (
               <>
                 <h2 className="text-3xl font-bold text-gray-800 mb-4">환영합니다!</h2>

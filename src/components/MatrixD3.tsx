@@ -1,5 +1,6 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, useMemo } from 'react';
 import * as d3 from 'd3';
+import { FixedSizeGrid as Grid } from 'react-window';
 
 // 매트릭스 데이터의 타입 정의
 interface MatrixData {
@@ -19,6 +20,24 @@ interface XYMatrixD3Props {
         bottom: number;
         left: number;
     };
+    fontSize?: number; // 추가: 폰트 사이즈(px)
+    minCellWidth?: number; // 추가: 셀 최소 너비(px)
+    minCellHeight?: number; // 추가: 셀 최소 높이(px)
+}
+
+interface XYMatrixD3VirtualProps extends XYMatrixD3Props {
+    data: MatrixData[];
+    width?: number;
+    height?: number;
+    margin?: {
+        top: number;
+        right: number;
+        bottom: number;
+        left: number;
+    };
+    fontSize?: number; // 추가: 폰트 사이즈(px)
+    minCellWidth?: number; // 추가: 셀 최소 너비(px)
+    minCellHeight?: number; // 추가: 셀 최소 높이(px)
 }
 
 // 데이터 인터페이스 정의
@@ -33,6 +52,9 @@ const XYMatrixD3: React.FC<XYMatrixD3Props> = ({
     width = 600,
     height = 400,
     margin = { top: 50, right: 20, bottom: 50, left: 100 },
+    fontSize = 14, // 기본값 14px
+    minCellWidth = 10, // 기본값 0 (제한 없음)
+    minCellHeight = 10, // 기본값 0 (제한 없음)
 }) => {
     const svgRef = useRef<SVGSVGElement | null>(null);
     const tooltipRef = useRef<HTMLDivElement | null>(null);
@@ -95,17 +117,45 @@ const XYMatrixD3: React.FC<XYMatrixD3Props> = ({
         const yDomain = Array.from(new Set(yUnique));
 
         // 2. scaleBand domain을 고유값으로
-        const xScale = d3
+        let xScale = d3
             .scaleBand<string>()
             .domain(xDomain)
             .range([0, innerWidth])
             .padding(0.05);
 
-        const yScale = d3
+        let yScale = d3
             .scaleBand<string>()
             .domain(yDomain)
             .range([0, innerHeight])
             .padding(0.05);
+
+        // 4. minCellWidth 적용 (x축만 예시, 필요시 y축도 동일하게)
+        if (minCellWidth > 0) {
+            const cellCount = xDomain.length;
+            const minWidth = cellCount * minCellWidth;
+            if (innerWidth < minWidth) {
+                xScale = d3
+                    .scaleBand<string>()
+                    .domain(xDomain)
+                    .range([0, minWidth])
+                    .padding(0.05);
+                // svg 크기도 강제로 늘릴 수 있음 (선택)
+                svg.attr("width", minWidth + margin.left + margin.right);
+            }
+        }
+        if (minCellHeight > 0) {
+            const cellCount = yDomain.length;
+            const minHeight = cellCount * minCellHeight;
+            if (innerHeight < minHeight) {
+                yScale = d3
+                    .scaleBand<string>()
+                    .domain(yDomain)
+                    .range([0, minHeight])
+                    .padding(0.05);
+                // svg 크기도 강제로 늘릴 수 있음 (선택)
+                svg.attr("height", minHeight + margin.top + margin.bottom);
+            }
+        }
 
         const minValue = d3.min(matrixData, (d) => d.value) ?? 0;
         const maxValue = d3.max(matrixData, (d) => d.value) ?? 1;
@@ -145,27 +195,29 @@ const XYMatrixD3: React.FC<XYMatrixD3Props> = ({
             .append("text")
             .attr("class", "cell-label")
             .attr("x", (d) => (xScale(d.x) || 0) + xScale.bandwidth() / 2)
-            .attr("y", (d) => (yScale(d.y) || 0) + yScale.bandwidth() / 2 + 5)
+            .attr("y", (d) => (yScale(d.y) || 0) + yScale.bandwidth() / 2 + fontSize / 3)
             .attr("text-anchor", "middle")
             .attr("fill", "#222")
             .attr("pointer-events", "none")
+            .style("font-size", `${fontSize}px`) // 폰트 사이즈 적용
             .text((d) => d.value);
 
-        // 5. X축 (고유값 기준 위치, 실제 라벨 표시)
+        // 5. X축
         g.append("g")
             .attr("class", "x-axis")
             .attr("transform", `translate(0,0)`)
             .call(
                 d3.axisTop(xScale)
-                    .tickFormat((x) => x) // 실제 라벨 그대로 표시
+                    .tickFormat((x) => x)
             )
             .selectAll<SVGTextElement, string>("text")
             .style("text-anchor", "start")
             .attr("dx", "0.8em")
             .attr("dy", "1.25em")
-            .attr("transform", "rotate(-90)");
+            .attr("transform", "rotate(-90)")
+            .style("font-size", `${fontSize}px`); // 폰트 사이즈 적용
 
-        // 6. Y축 (고유값 기준 위치, 실제 라벨 표시)
+        // 6. Y축
         g.append("g")
             .attr("class", "y-axis")
             .call(
@@ -173,9 +225,9 @@ const XYMatrixD3: React.FC<XYMatrixD3Props> = ({
                     .tickFormat((y) => y)
             )
             .selectAll<SVGTextElement, string>("text")
-            .style("font-size", "10px");
+            .style("font-size", `${fontSize}px`); // 폰트 사이즈 적용
 
-    }, [matrixData, width, height, margin]);
+    }, [matrixData, width, height, margin, fontSize, minCellWidth]);
 
     // 인라인 에디터 렌더링
     let inputBox: React.JSX.Element | null = null;
@@ -558,6 +610,136 @@ const XYMatrixD3: React.FC<XYMatrixD3Props> = ({
     );
 };
 
+const XYMatrixD3Virtual: React.FC<XYMatrixD3VirtualProps> = ({
+    data,
+    width = 900,
+    height = 900,
+    fontSize = 12,
+    minCellWidth = 20,
+    minCellHeight = 20,
+    margin = { top: 50, right: 20, bottom: 50, left: 100 },
+}) => {
+    // X, Y 라벨 추출 (고유값, 순서 보장)
+    const xLabels = useMemo(() => Array.from(new Set(data.map(d => d.x))), [data]);
+    const yLabels = useMemo(() => Array.from(new Set(data.map(d => d.y))), [data]);
+
+    // 2차원 배열로 변환 (행: y, 열: x)
+    const matrix = useMemo(() => {
+        const map = new Map<string, number>();
+        data.forEach(d => map.set(`${d.x}|||${d.y}`, d.value));
+        return yLabels.map(y =>
+            xLabels.map(x => map.get(`${x}|||${y}`) ?? 0)
+        );
+    }, [data, xLabels, yLabels]);
+
+    // 색상 스케일
+    const minValue = Math.min(...data.map(d => d.value));
+    const maxValue = Math.max(...data.map(d => d.value));
+    const colorScale = d3
+        .scaleSequential<string>()
+        .domain([minValue, maxValue])
+        .interpolator(d3.interpolateYlGnBu);
+    // const colorScale = (v: number) =>
+    //     (window as any).d3
+    //         ? (window as any).d3.interpolateYlGnBu((v - minValue) / (maxValue - minValue || 1))
+    //         : `rgba(0,0,0,0.1)`; // fallback
+
+    // 셀 렌더러
+    const Cell = ({ columnIndex, rowIndex, style }: any) => {
+        // X축 라벨
+        if (rowIndex === 0 && columnIndex > 0) {
+            return (
+                <div
+                    style={{
+                        ...style,
+                        fontWeight: 'bold',
+                        fontSize,
+                        background: '#f3f4f6',
+                        border: '1px solid #e5e7eb',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        writingMode: 'vertical-rl',
+                        textOrientation: 'mixed',
+                    }}
+                    title={xLabels[columnIndex - 1]}
+                >
+                    {xLabels[columnIndex - 1]}
+                </div>
+            );
+        }
+        // Y축 라벨
+        if (columnIndex === 0 && rowIndex > 0) {
+            return (
+                <div
+                    style={{
+                        ...style,
+                        fontWeight: 'bold',
+                        fontSize,
+                        background: '#f3f4f6',
+                        border: '1px solid #e5e7eb',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                    }}
+                    title={yLabels[rowIndex - 1]}
+                >
+                    {yLabels[rowIndex - 1]}
+                </div>
+            );
+        }
+        // 좌상단 빈칸
+        if (rowIndex === 0 && columnIndex === 0) {
+            return (
+                <div
+                    style={{
+                        ...style,
+                        background: '#f3f4f6',
+                        border: '1px solid #e5e7eb',
+                    }}
+                />
+            );
+        }
+        // 데이터 셀
+        const value = matrix[rowIndex - 1][columnIndex - 1];
+        return (
+            <div
+                style={{
+                    ...style,
+                    background: colorScale(value),
+                    border: '1px solid #e5e7eb',
+                    fontSize,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#222',
+                    fontWeight: 500,
+                }}
+                title={String(value)}
+            >
+                {value}
+            </div>
+        );
+    };
+    // 전체 행/열 수 (라벨 포함)
+    const rowCount = yLabels.length + 1;
+    const columnCount = xLabels.length + 1;
+
+    return (
+        <Grid
+            columnCount={columnCount}
+            rowCount={rowCount}
+            columnWidth={minCellWidth}
+            rowHeight={minCellHeight}
+            width={width}
+            height={height}
+        >
+            {Cell}
+        </Grid>
+    );
+};
+
+
 const HeatmapChart: React.FC = () => {
     // D3.js 렌더링을 위한 ref 생성
     const svgRef = useRef<SVGSVGElement | null>(null);
@@ -744,6 +926,21 @@ const Matrix: React.FC = () => {
         { x: 'Feature C', y: 'Product Z', value: 0.8 },
     ];
 
+
+    // 100x100 행렬 데이터 생성 예시 (row: 0~99, col: 0~99, value: 0~99 랜덤)
+    const size = 500;
+    const data100: MatrixData[] = [];
+
+    for (let i = 0; i < size; i++) {
+        for (let j = 0; j < size; j++) {
+            data100.push({
+                x: `C${j + 1}`,
+                y: `R${i + 1}`,
+                value: Math.floor(Math.random() * 100), // 0~99 랜덤값
+            });
+        }
+    }
+
     return (
         <div style={{ fontFamily: 'Arial, sans-serif', padding: '20px' }}>
             <h1>Task-Engineer Performance Matrix</h1>
@@ -765,6 +962,29 @@ const Matrix: React.FC = () => {
                 </h1>
                 <div className="w-full max-w-4xl bg-white rounded-lg shadow-xl p-6">
                     <HeatmapChart />
+                </div>
+            </div>
+
+
+            {/* 100x100 히트맵 예시 */}
+            <div className="min-h-screen bg-gray-100 flex flex-col items-center justify-center p-4"
+                style={{ width: '100%' }}>
+                <h2 className="text-2xl font-semibold text-gray-800 mt-10 mb-6">
+                    100x100 히트맵 예시
+                </h2>
+                <div
+                    style={{
+                        width: 950, // 컨테이너 크기(스크롤 영역)
+                        height: 950,
+                        overflow: 'auto',
+                        borderRadius: 12,
+                        boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+                        background: '#fff',
+                        border: '1px solid #e5e7eb',
+                        padding: 8,
+                    }}
+                >
+                    <XYMatrixD3Virtual data={data100} width={900} height={900} margin={{ top: 50, right: 20, bottom: 50, left: 10 }} fontSize={10} />
                 </div>
             </div>
         </div>

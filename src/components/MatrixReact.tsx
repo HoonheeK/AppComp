@@ -1,32 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { FixedSizeGrid as Grid } from 'react-window'; // 추가
-
-// Define types for CustomMessageBox props
-interface CustomMessageBoxProps {
-    message: string;
-    onClose: () => void;
-}
-
-// Custom Alert/Message Box Component
-const CustomMessageBox: React.FC<CustomMessageBoxProps> = ({ message, onClose }) => {
-    if (!message) return null;
-
-    return (
-        <div className="fixed inset-0 bg-[rgba(0,0,0,0.5)] flex items-center justify-center p-4 z-50">
-            <div className="bg-white rounded-lg shadow-xl p-6 max-w-sm w-full transform transition-all duration-300 scale-100 opacity-100">
-                <p className="text-gray-800 text-lg mb-4 text-center">{message}</p>
-                <div className="flex justify-center">
-                    <button
-                        onClick={onClose}
-                        className="px-6 py-2 bg-blue-600 text-gray-500 font-semibold rounded-md shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75 transition duration-150 ease-in-out"
-                    >
-                        OK
-                    </button>
-                </div>
-            </div>
-        </div>
-    );
-};
 
 // Define types for a cell's data (can be number, string, or an object with 'text')
 type CellData = number | string | { id: number; text: string };
@@ -34,7 +7,6 @@ type CellData = number | string | { id: number; text: string };
 // XYMatrix 가상화 버전
 interface XYMatrixVirtualProps {
     data: CellData[][];
-    onCellClick?: (rowIndex: number, colIndex: number, cellValue: CellData) => void;
     xAxisLabels?: string[];
     yAxisLabels?: string[];
     xAxisWidths?: number[];
@@ -48,7 +20,6 @@ interface XYMatrixVirtualProps {
 
 const XYMatrixVirtual: React.FC<XYMatrixVirtualProps> = ({
     data,
-    onCellClick,
     xAxisLabels = [],
     yAxisLabels = [],
     xAxisWidths = [],
@@ -59,22 +30,65 @@ const XYMatrixVirtual: React.FC<XYMatrixVirtualProps> = ({
     width = 800,
     height = 600,
 }) => {
-    if (!data || data.length === 0) {
+    const [editingCell, setEditingCell] = useState<{ row: number; col: number } | null>(null);
+    const [editingCellValue, setEditingCellValue] = useState<string>('');
+    const [editingXLabel, setEditingXLabel] = useState<number | null>(null);
+    const [editingXLabelValue, setEditingXLabelValue] = useState<string>('');
+    const [editingYLabel, setEditingYLabel] = useState<number | null>(null);
+    const [editingYLabelValue, setEditingYLabelValue] = useState<string>('');
+
+    const [localData, setLocalData] = useState<CellData[][]>(data);
+    const [localXAxis, setLocalXAxis] = useState<string[]>(xAxisLabels);
+    const [localYAxis, setLocalYAxis] = useState<string[]>(yAxisLabels);
+    const [editor, setEditor] = useState<{
+        type: 'cell' | 'x' | 'y';
+        row?: number;
+        col?: number;
+        value: string;
+        left: number;
+        top: number;
+    } | null>(null);
+
+    useEffect(() => {
+        setLocalData(data);
+    }, [data]);
+    useEffect(() => {
+        setLocalXAxis(xAxisLabels);
+    }, [xAxisLabels]);
+    useEffect(() => {
+        setLocalYAxis(yAxisLabels);
+    }, [yAxisLabels]);
+
+    if (!localData || localData.length === 0) {
         return (
             <div className="flex items-center justify-center p-8 bg-gray-100 rounded-lg shadow-inner text-gray-600 text-lg font-medium">
                 데이터가 없습니다.(No data available.)
             </div>
         );
     }
+    // 셀/축 더블클릭 핸들러
+    const handleDoubleClick = (
+        type: 'cell' | 'x' | 'y',
+        row: number,
+        col: number,
+        value: string,
+        event: React.MouseEvent
+    ) => {
+        const rect = (event.target as HTMLElement).getBoundingClientRect();
+        setEditor({
+            type,
+            row,
+            col,
+            value,
+            left: rect.left,
+            top: rect.top,
+        });
+    };
 
-    const numRows = data.length;
-    const numCols = data[0].length;
-
-    // 셀 크기
+    const numRows = localData.length;
+    const numCols = localData[0].length;
     const cellWidth = xAxisWidths.length === numCols ? xAxisWidths[0] : 30;
     const cellHeight = yAxisHeights.length === numRows ? yAxisHeights[0] : 30;
-
-    // 전체 행/열: +1은 축 라벨
     const totalRows = numRows + 1;
     const totalCols = numCols + 1;
 
@@ -88,6 +102,45 @@ const XYMatrixVirtual: React.FC<XYMatrixVirtualProps> = ({
         }
         // X축 라벨
         if (rowIndex === 0) {
+            // X축 라벨 인라인 수정
+            if (editingXLabel === columnIndex - 1) {
+                return (
+                    <input
+                        style={{
+                            ...style,
+                            fontSize: xAxisFontSize,
+                            fontWeight: 'bold',
+                            textAlign: 'center',
+                            border: '2px solid #3498db',
+                            background: '#fffbe6',
+                            width: '100%',
+                            height: '100%',
+                        }}
+                        value={editingXLabelValue}
+                        // autoFocus
+                        onChange={e => {
+                            console.log('X축 입력:', e.target.value);
+                            setEditingXLabelValue(e.target.value);
+                        }}
+                        onBlur={() => {
+                            console.log('X축 onBlur');
+                            setEditingXLabel(null);
+                            setEditingXLabelValue('');
+                        }}
+                        onKeyDown={e => {
+                            console.log('X축 onKeyDown:', e.key);
+                            if (e.key === 'Enter') {
+                                setLocalXAxis(prev => prev.map((v, i) => i === columnIndex - 1 ? editingXLabelValue : v));
+                                setEditingXLabel(null);
+                                setEditingXLabelValue('');
+                            } else if (e.key === 'Escape') {
+                                setEditingXLabel(null);
+                                setEditingXLabelValue('');
+                            }
+                        }}
+                    />
+                );
+            }
             return (
                 <div
                     style={{
@@ -101,14 +154,58 @@ const XYMatrixVirtual: React.FC<XYMatrixVirtualProps> = ({
                         minWidth: cellWidth,
                         minHeight: cellHeight,
                         fontSize: xAxisFontSize,
+                        cursor: 'pointer',
+                    }}
+                    onDoubleClick={() => {
+                        setEditingXLabel(columnIndex - 1);
+                        setEditingXLabelValue(localXAxis[columnIndex - 1]);
                     }}
                 >
-                    {xAxisLabels[columnIndex - 1]}
+                    {localXAxis[columnIndex - 1]}
                 </div>
             );
         }
         // Y축 라벨
         if (columnIndex === 0) {
+            // Y축 라벨 인라인 수정
+            if (editingYLabel === rowIndex - 1) {
+                return (
+                    <input
+                        style={{
+                            ...style,
+                            fontSize: yAxisFontSize,
+                            fontWeight: 'bold',
+                            textAlign: 'center',
+                            border: '2px solid #3498db',
+                            background: '#fffbe6',
+                            width: '100%',
+                            height: '100%',
+                        }}
+                        value={editingYLabelValue}
+                        // autoFocus
+                        onChange={e => {
+                            console.log('Y축 입력:', e.target.value);
+                            setEditingYLabelValue(e.target.value);
+                        }}
+                        onBlur={() => {
+                            console.log('Y축 onBlur');
+                            setEditingYLabel(null);
+                            setEditingYLabelValue('');
+                        }}
+                        onKeyDown={e => {
+                            console.log('Y축 onKeyDown:', e.key);
+                            if (e.key === 'Enter') {
+                                setLocalYAxis(prev => prev.map((v, i) => i === rowIndex - 1 ? editingYLabelValue : v));
+                                setEditingYLabel(null);
+                                setEditingYLabelValue('');
+                            } else if (e.key === 'Escape') {
+                                setEditingYLabel(null);
+                                setEditingYLabelValue('');
+                            }
+                        }}
+                    />
+                );
+            }
             return (
                 <div
                     style={{
@@ -122,14 +219,66 @@ const XYMatrixVirtual: React.FC<XYMatrixVirtualProps> = ({
                         minWidth: cellWidth,
                         minHeight: cellHeight,
                         fontSize: yAxisFontSize,
+                        cursor: 'pointer',
+                    }}
+                    onDoubleClick={() => {
+                        setEditingYLabel(rowIndex - 1);
+                        setEditingYLabelValue(localYAxis[rowIndex - 1]);
                     }}
                 >
-                    {yAxisLabels[rowIndex - 1]}
+                    {localYAxis[rowIndex - 1]}
                 </div>
             );
         }
         // 데이터 셀
-        const cell = data[rowIndex - 1][columnIndex - 1];
+        // 셀 인라인 수정
+        if (editingCell && editingCell.row === rowIndex - 1 && editingCell.col === columnIndex - 1) {
+            return (
+                <input
+                    style={{
+                        ...style,
+                        fontSize: cellFontSize,
+                        fontWeight: 600,
+                        textAlign: 'center',
+                        border: '2px solid #3498db',
+                        background: '#fffbe6',
+                        width: '100%',
+                        height: '100%',
+                    }}
+                    value={editingCellValue}
+                    // autoFocus
+                    onChange={e => {
+                        console.log('셀 입력:', e.target.value);
+                        setEditingCellValue(e.target.value);
+                    }}
+                    onBlur={() => {
+                        console.log('셀 onBlur');
+                        setEditingCell(null);
+                        setEditingCellValue('');
+                    }}
+                    onKeyDown={e => {
+                        console.log('셀 onKeyDown:', e.key);
+                        if (e.key === 'Enter') {
+                            setLocalData(prev =>
+                                prev.map((row, rIdx) =>
+                                    row.map((cell, cIdx) =>
+                                        rIdx === rowIndex - 1 && cIdx === columnIndex - 1
+                                            ? editingCellValue
+                                            : cell
+                                    )
+                                )
+                            );
+                            setEditingCell(null);
+                            setEditingCellValue('');
+                        } else if (e.key === 'Escape') {
+                            setEditingCell(null);
+                            setEditingCellValue('');
+                        }
+                    }}
+                />
+            );
+        }
+        const cell = localData[rowIndex - 1][columnIndex - 1];
         return (
             <div
                 style={{
@@ -144,33 +293,71 @@ const XYMatrixVirtual: React.FC<XYMatrixVirtualProps> = ({
                     fontWeight: 600,
                     color: '#22223b',
                 }}
-                onClick={() => onCellClick && onCellClick(rowIndex - 1, columnIndex - 1, cell)}
+                onDoubleClick={e =>
+                    handleDoubleClick(
+                        'cell',
+                        rowIndex - 1,
+                        columnIndex - 1,
+                        typeof cell === 'object' && cell !== null && 'text' in cell
+                            ? cell.text
+                            : String(cell),
+                        e
+                    )
+                }
             >
-                {typeof cell === 'object' && cell !== null && 'text' in cell ? (cell as { text: string }).text : cell}
-            </div>
+        { typeof cell === 'object' && cell !== null && 'text' in cell ? (cell as { text: string }).text : cell }
+            </div >
         );
     };
 
-    return (
-        <div style={{ width, height }}>
-            <Grid
-                columnCount={totalCols}
-                rowCount={totalRows}
-                columnWidth={cellWidth}
-                rowHeight={cellHeight}
-                width={width}
-                height={height}
-            >
-                {Cell}
-            </Grid>
-        </div>
-    );
+return (
+    <div style={{ width, height }}>
+        <Grid
+            columnCount={totalCols}
+            rowCount={totalRows}
+            columnWidth={cellWidth}
+            rowHeight={cellHeight}
+            width={width}
+            height={height}
+        >
+            {Cell}
+        </Grid>
+        {editor && (
+            <input
+                style={{
+                    position: 'fixed',
+                    left: editor.left,
+                    top: editor.top,
+                    zIndex: 9999,
+                    background: '#fffbe6',
+                    border: '2px solid #3498db',
+                    fontSize: cellFontSize,
+                    fontWeight: 600,
+                    width: 80,
+                }}
+                value={editor.value}
+                autoFocus
+                onChange={e => setEditor({ ...editor, value: e.target.value })}
+                onBlur={() => setEditor(null)}
+                onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                        // 값 반영 로직 (예시)
+                        // setLocalData, setLocalXAxis, setLocalYAxis 등
+                        setEditor(null);
+                    } else if (e.key === 'Escape') {
+                        setEditor(null);
+                    }
+                }}
+            />
+        )}
+    </div>
+);
 };
 
-// Main App Component
+// Main MatrixReact Component
 const MatrixReact: React.FC = () => {
     // Define the size of the matrix
-    const MATRIX_SIZE = 1000; // Changed to 1000x1000
+    const MATRIX_SIZE = 2000; // Changed to 1000x1000
 
     // State for font sizes
     const [currentCellFontSize, setCurrentCellFontSize] = useState<string>('0.5rem');
@@ -212,41 +399,6 @@ const MatrixReact: React.FC = () => {
     // Custom heights for Y-axis rows (pixels) - using a fixed height for 1000x1000 for performance
     const customYHeights: number[] = Array(MATRIX_SIZE).fill(30); // Each row 30px high
 
-    // State for the custom message box
-    interface MessageBoxState {
-        isVisible: boolean;
-        message: string;
-    }
-    const [messageBox, setMessageBox] = useState<MessageBoxState>({
-        isVisible: false,
-        message: '',
-    });
-
-    // Function to handle cell clicks
-    const handleCellClick = (rowIndex: number, colIndex: number, cellValue: CellData): void => {
-        const valueToDisplay = typeof cellValue === 'object' && cellValue !== null && 'text' in cellValue ? cellValue.text : cellValue;
-        const newMessage = `클릭되었습니다! 행: ${rowIndex} (${yAxis[rowIndex]}), 열: ${colIndex} (${xAxis[colIndex]}), 값: ${valueToDisplay}`;
-        setMessageBox({ isVisible: true, message: newMessage });
-
-        // Create a new matrix data array to update the clicked cell
-        const newMatrixData = matrixData.map((row: CellData[], rIdx: number) =>
-            row.map((cell: CellData, cIdx: number) => {
-                // If the current cell is the clicked cell, change its value to 'X'
-                if (rIdx === rowIndex && cIdx === colIndex) {
-                    return 'X';
-                }
-                return cell;
-            })
-        );
-        // Update the state with the new matrix data
-        setMatrixData(newMatrixData);
-    };
-
-    // Function to close the message box
-    const closeMessageBox = (): void => {
-        setMessageBox({ isVisible: false, message: '' });
-    };
-
     return (
         <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex flex-col items-center justify-center p-4 sm:p-6 md:p-8 font-inter w-[80vw]">
             {/* Page Title */}
@@ -257,7 +409,7 @@ const MatrixReact: React.FC = () => {
             </h1>
 
             {/* Font Size Controls */}
-            <div className="bg-white p-4 rounded-xl shadow-lg mb-8 w-full flex flex-col sm:flex-row items-center justify-center gap-4 border border-gray-200">
+            <div className="bg-white p-4 rounded-xl shadow-lg mb-8 flex flex-col sm:flex-row items-center justify-center gap-4 border border-gray-200">
                 <label htmlFor="yFontSizeInput" className="text-lg font-semibold text-gray-700 whitespace-nowrap">
                     Y축 글자 크기:
                 </label>
@@ -305,13 +457,12 @@ const MatrixReact: React.FC = () => {
             </div>
 
             {/* Main XY Matrix Example with Virtualization */}
-            <div className="bg-white p-6 rounded-2xl shadow-2xl mb-12 w-[70vw] border border-blue-200 overflow-auto max-h-[80vh]">
+            <div className="bg-white p-6 shadow-2xl mb-12 w-[70vw] border border-blue-200 ">
                 <h2 className="text-2xl sm:text-3xl font-bold text-gray-800 mb-6 text-center">
                     1000x1000 그리드 (가상화)
                 </h2>
                 <XYMatrixVirtual
                     data={matrixData}
-                    onCellClick={handleCellClick}
                     xAxisLabels={xAxis}
                     yAxisLabels={yAxis}
                     xAxisWidths={customXWidths}
@@ -327,14 +478,6 @@ const MatrixReact: React.FC = () => {
                 </p>
             </div>
 
-            {/* Example with empty data */}
-            <div className="bg-white p-6 rounded-2xl shadow-2xl mb-12 w-full max-w-2xl border border-purple-200">
-                <h2 className="text-2xl sm:text-3xl font-bold text-gray-800 mb-6 text-center">
-                    빈 데이터 예시 (Empty Data Example)
-                </h2>
-                <XYMatrixVirtual data={[]} onCellClick={handleCellClick} xAxisLabels={xAxis} yAxisLabels={yAxis} />
-            </div>
-
             {/* Example with complex data (objects) and default sizing */}
             <div className="bg-white p-6 rounded-2xl shadow-2xl w-full max-w-2xl border border-green-200">
                 <h2 className="text-2xl sm:text-3xl font-bold text-gray-800 mb-6 text-center">
@@ -347,19 +490,10 @@ const MatrixReact: React.FC = () => {
                     ]}
                     xAxisLabels={['Fruit A', 'Fruit B']}
                     yAxisLabels={['Row X', 'Row Y']}
-                    onCellClick={(r, c, val) => {
-                        const newMessage = `클릭된 객체: ${(val as { text: string }).text} (ID: ${(val as { id: number }).id})`;
-                        setMessageBox({ isVisible: true, message: newMessage });
-                    }}
                     width={300}
                     height={150}
                 />
             </div>
-
-            <CustomMessageBox
-                message={messageBox.message}
-                onClose={closeMessageBox}
-            />
 
             {/* Tailwind CSS Script - MUST be at the end of the body or in the head */}
             <script src="https://cdn.tailwindcss.com"></script>
